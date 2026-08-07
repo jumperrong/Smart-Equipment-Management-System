@@ -1,0 +1,1039 @@
+from pydantic import BaseModel, Field
+from typing import Optional, List
+from datetime import datetime
+
+from app.models import (
+    UserRole, EquipmentStatus, WorkOrderType, WorkOrderStatus, FaultCategory,
+    D8Status, SkillLevel, InventoryStatus, ApplicationType, ApplicationStatus,
+    DictionaryCategory,
+)
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class LoginPayload(BaseModel):
+    username: str
+    password: str
+
+
+class UserBase(BaseModel):
+    username: str = Field(..., max_length=64)
+    full_name: Optional[str] = Field(None, max_length=128)
+    role: UserRole = UserRole.OPERATOR
+    is_active: bool = True
+
+
+class UserCreate(UserBase):
+    password: str = Field(..., min_length=3)
+
+
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[UserRole] = None
+    is_active: Optional[bool] = None
+    password: Optional[str] = Field(None, min_length=3)
+
+
+class UserOut(UserBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ---------- Equipment ----------
+
+class EquipmentBase(BaseModel):
+    name: str = Field(..., max_length=128)
+    asset_no: Optional[str] = Field(None, max_length=64)
+    factory: Optional[str] = Field(None, max_length=64)
+    area: Optional[str] = Field(None, max_length=64)
+    model: Optional[str] = Field(None, max_length=128)
+    vendor: Optional[str] = Field(None, max_length=128)
+    serial_no: Optional[str] = Field(None, max_length=128)
+    install_date: Optional[datetime] = None
+    theoretical_cycle: Optional[float] = Field(None, gt=0)
+    spec: Optional[dict] = None
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class EquipmentCreate(EquipmentBase):
+    current_status: EquipmentStatus = EquipmentStatus.OFFLINE
+
+
+class EquipmentUpdate(BaseModel):
+    name: Optional[str] = None
+    asset_no: Optional[str] = None
+    factory: Optional[str] = None
+    area: Optional[str] = None
+    model: Optional[str] = None
+    vendor: Optional[str] = None
+    serial_no: Optional[str] = None
+    install_date: Optional[datetime] = None
+    theoretical_cycle: Optional[float] = None
+    spec: Optional[dict] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class EquipmentOut(EquipmentBase):
+    id: int
+    current_status: EquipmentStatus
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ---------- Equipment Status Log ----------
+
+class StatusLogBase(BaseModel):
+    to_status: EquipmentStatus
+    start_time: Optional[datetime] = None
+    reason_code: Optional[str] = Field(None, max_length=64)
+    reason_detail: Optional[str] = Field(None, max_length=255)
+    remark: Optional[str] = Field(None, max_length=255)
+
+
+class StatusLogCreate(StatusLogBase):
+    equipment_id: Optional[int] = None
+
+
+class StatusLogClose(BaseModel):
+    end_time: Optional[datetime] = None
+
+
+class StatusLogOut(StatusLogBase):
+    id: int
+    equipment_id: int
+    from_status: Optional[EquipmentStatus] = None
+    end_time: Optional[datetime] = None
+    duration_minutes: Optional[float] = None
+    operator_id: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ============ 模块 A: 设备附件 ============
+
+class AttachmentOut(BaseModel):
+    id: int
+    equipment_id: int
+    filename: str
+    file_size: Optional[int] = None
+    file_type: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    uploaded_by: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AttachmentMeta(BaseModel):
+    category: Optional[str] = None
+    description: Optional[str] = None
+
+
+# ============ 模块 D: 备件 ============
+
+class SparePartBase(BaseModel):
+    sku: str = Field(..., max_length=64)
+    name: str = Field(..., max_length=128)
+    spec: Optional[str] = None
+    brand: Optional[str] = None
+    unit: str = "个"
+    safety_stock: int = 0
+    current_stock: int = 0
+    unit_price: float = 0
+    location: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class SparePartCreate(SparePartBase):
+    pass
+
+
+class SparePartUpdate(BaseModel):
+    name: Optional[str] = None
+    spec: Optional[str] = None
+    brand: Optional[str] = None
+    unit: Optional[str] = None
+    safety_stock: Optional[int] = None
+    unit_price: Optional[float] = None
+    location: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class SparePartOut(SparePartBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class StockMovement(BaseModel):
+    movement_type: str = Field(..., description="IN/OUT/ADJUST")
+    qty: int = Field(..., gt=0)
+    remark: Optional[str] = None
+
+
+class MovementOut(BaseModel):
+    id: int
+    spare_part_id: int
+    movement_type: str
+    qty: int
+    before_stock: Optional[int] = None
+    after_stock: Optional[int] = None
+    ref_type: Optional[str] = None
+    ref_id: Optional[int] = None
+    operator_id: Optional[int] = None
+    remark: Optional[str] = None
+    created_at: datetime
+    spare_part: Optional[SparePartOut] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SparePartStockSummary(BaseModel):
+    """备件库存概览统计"""
+    total_skus: int = 0                   # 总品种数
+    total_qty: int = 0                    # 总库存数量
+    total_value: float = 0.0              # 总库存金额（current_stock * unit_price）
+    low_stock_count: int = 0              # 低于安全库存的 SKU 数
+    out_of_stock_count: int = 0           # 断货的 SKU 数（current_stock == 0）
+
+
+class EquipmentSparePartCreate(BaseModel):
+    spare_part_id: int
+    qty_per: int = 1
+    remark: Optional[str] = None
+
+
+class EquipmentSparePartOut(BaseModel):
+    id: int
+    equipment_id: int
+    spare_part_id: int
+    qty_per: int
+    remark: Optional[str] = None
+    spare_part: Optional[SparePartOut] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ============ 模块 B: 点检 ============
+
+class InspectionItemBase(BaseModel):
+    seq: int = 0
+    name: str = Field(..., max_length=128)
+    standard: Optional[str] = None
+    required: bool = True
+
+
+class InspectionItemCreate(InspectionItemBase):
+    pass
+
+
+class InspectionItemOut(InspectionItemBase):
+    id: int
+    template_id: int
+
+    class Config:
+        from_attributes = True
+
+
+class InspectionTemplateBase(BaseModel):
+    name: str = Field(..., max_length=128)
+    equipment_id: Optional[int] = None
+    frequency: str = "DAILY"
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class InspectionTemplateCreate(InspectionTemplateBase):
+    items: List[InspectionItemCreate] = Field(default_factory=list)
+
+
+class InspectionTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    equipment_id: Optional[int] = None
+    frequency: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    items: Optional[List[InspectionItemCreate]] = None
+
+
+class InspectionTemplateOut(InspectionTemplateBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    items: List[InspectionItemOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+class InspectionResultIn(BaseModel):
+    item_id: Optional[int] = None
+    item_name: str
+    result: str = Field(..., description="OK/NG/NA")
+    value: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class InspectionRecordCreate(BaseModel):
+    template_id: int
+    equipment_id: Optional[int] = None
+    shift: Optional[str] = None
+    inspect_time: Optional[datetime] = None
+    remark: Optional[str] = None
+    results: List[InspectionResultIn] = Field(default_factory=list)
+
+
+class InspectionResultOut(InspectionResultIn):
+    id: int
+    record_id: int
+
+    class Config:
+        from_attributes = True
+
+
+class InspectionRecordOut(BaseModel):
+    id: int
+    template_id: int
+    equipment_id: Optional[int] = None
+    shift: Optional[str] = None
+    inspect_time: datetime
+    inspector_id: Optional[int] = None
+    overall_result: str
+    remark: Optional[str] = None
+    created_at: datetime
+    results: List[InspectionResultOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+# ============ 模块 C: 工单 / 报修 / PM ============
+
+class PMPlanBase(BaseModel):
+    equipment_id: int
+    name: str = Field(..., max_length=128)
+    cycle_days: int = Field(..., gt=0)
+    items: List[str] = Field(default_factory=list)
+    next_due_date: Optional[datetime] = None
+    planned_start_hour: int = Field(9, ge=0, le=23, description="计划开始时段(0-23点)")
+    planned_duration_minutes: int = Field(120, gt=0, description="计划持续时长(分钟)")
+    is_active: bool = True
+
+
+class PMPlanCreate(PMPlanBase):
+    pass
+
+
+class PMPlanUpdate(BaseModel):
+    equipment_id: Optional[int] = None
+    name: Optional[str] = None
+    cycle_days: Optional[int] = None
+    items: Optional[List[str]] = None
+    next_due_date: Optional[datetime] = None
+    planned_start_hour: Optional[int] = Field(None, ge=0, le=23)
+    planned_duration_minutes: Optional[int] = Field(None, gt=0)
+    is_active: Optional[bool] = None
+
+
+class PMPlanOut(PMPlanBase):
+    id: int
+    last_executed_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RepairReportCreate(BaseModel):
+    equipment_id: int
+    phenomenon: str
+    urgency: str = "NORMAL"
+
+
+class RepairReportOut(BaseModel):
+    id: int
+    equipment_id: int
+    reporter_id: Optional[int] = None
+    phenomenon: str
+    urgency: str
+    reported_at: datetime
+    work_order_id: Optional[int] = None
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class FiveWhyIn(BaseModel):
+    seq: int = Field(..., ge=1, le=5)
+    question: str
+    answer: Optional[str] = None
+
+
+class FiveWhyOut(BaseModel):
+    id: int
+    work_order_id: int
+    seq: int
+    question: str
+    answer: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SparePartUsageIn(BaseModel):
+    spare_part_id: int
+    qty: int = Field(..., gt=0)
+    remark: Optional[str] = None
+
+
+class SparePartUsageOut(BaseModel):
+    id: int
+    work_order_id: int
+    spare_part_id: int
+    qty: int
+    movement_id: Optional[int] = None
+    remark: Optional[str] = None
+    spare_part: Optional[SparePartOut] = None
+
+    class Config:
+        from_attributes = True
+
+
+class WorkOrderCreate(BaseModel):
+    type: WorkOrderType
+    equipment_id: int
+    title: str = Field(..., max_length=255)
+    description: Optional[str] = None
+    assignee_id: Optional[int] = None
+    source_report_id: Optional[int] = None
+    pm_plan_id: Optional[int] = None
+    planned_start: Optional[datetime] = None
+    planned_end: Optional[datetime] = None
+    remark: Optional[str] = None
+
+
+class WorkOrderUpdate(BaseModel):
+    status: Optional[WorkOrderStatus] = None
+    assignee_id: Optional[int] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    planned_start: Optional[datetime] = None
+    planned_end: Optional[datetime] = None
+    actual_start: Optional[datetime] = None
+    actual_end: Optional[datetime] = None
+    remark: Optional[str] = None
+
+
+class FaultAnalysisIn(BaseModel):
+    fault_category: Optional[FaultCategory] = None
+    root_cause: Optional[str] = None
+    solution: Optional[str] = None
+    prevention: Optional[str] = None
+    five_whys: Optional[List[FiveWhyIn]] = None
+
+
+class WorkOrderOut(BaseModel):
+    id: int
+    order_no: str
+    type: WorkOrderType
+    status: WorkOrderStatus
+    equipment_id: int
+    title: str
+    description: Optional[str] = None
+    assignee_id: Optional[int] = None
+    source_report_id: Optional[int] = None
+    pm_plan_id: Optional[int] = None
+    status_log_id: Optional[int] = None
+    fault_category: Optional[FaultCategory] = None
+    root_cause: Optional[str] = None
+    solution: Optional[str] = None
+    prevention: Optional[str] = None
+    planned_start: Optional[datetime] = None
+    planned_end: Optional[datetime] = None
+    actual_start: Optional[datetime] = None
+    actual_end: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    remark: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    five_whys: List[FiveWhyOut] = []
+    spare_usages: List[SparePartUsageOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+# ============ 模块 E: 品管工具 (8D / FMEA) ============
+
+class D8ReportBase(BaseModel):
+    equipment_id: int
+    work_order_id: Optional[int] = None
+    title: str = Field(..., max_length=255)
+    problem: Optional[str] = None
+    d1_team: Optional[str] = None
+    d2_problem_desc: Optional[str] = None
+    d3_interim: Optional[str] = None
+    d4_root_cause: Optional[str] = None
+    d5_permanent: Optional[str] = None
+    d6_implement: Optional[str] = None
+    d7_prevent: Optional[str] = None
+    d8_recognition: Optional[str] = None
+    status: D8Status = D8Status.OPEN
+    owner_id: Optional[int] = None
+
+
+class D8ReportCreate(D8ReportBase):
+    pass
+
+
+class D8ReportUpdate(BaseModel):
+    title: Optional[str] = None
+    problem: Optional[str] = None
+    d1_team: Optional[str] = None
+    d2_problem_desc: Optional[str] = None
+    d3_interim: Optional[str] = None
+    d4_root_cause: Optional[str] = None
+    d5_permanent: Optional[str] = None
+    d6_implement: Optional[str] = None
+    d7_prevent: Optional[str] = None
+    d8_recognition: Optional[str] = None
+    status: Optional[D8Status] = None
+    owner_id: Optional[int] = None
+
+
+class D8ReportOut(D8ReportBase):
+    id: int
+    report_no: str
+    closed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class FMEAItemBase(BaseModel):
+    seq: int = 0
+    process_step: Optional[str] = None
+    failure_mode: str = Field(..., max_length=255)
+    failure_effect: Optional[str] = None
+    cause: Optional[str] = None
+    severity: int = Field(5, ge=1, le=10)
+    occurrence: int = Field(5, ge=1, le=10)
+    detection: int = Field(5, ge=1, le=10)
+    recommended_action: Optional[str] = None
+    action_owner_id: Optional[int] = None
+    action_due_date: Optional[datetime] = None
+    action_status: str = "OPEN"
+    action_result: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class FMEAItemCreate(FMEAItemBase):
+    pass
+
+
+class FMEAItemOut(FMEAItemBase):
+    id: int
+    fmea_id: int
+    rpn: int
+
+    class Config:
+        from_attributes = True
+
+
+class FMEABase(BaseModel):
+    equipment_id: int
+    name: str = Field(..., max_length=255)
+    version: str = "1.0"
+    is_active: bool = True
+
+
+class FMEACreate(FMEABase):
+    items: List[FMEAItemCreate] = Field(default_factory=list)
+
+
+class FMEAUpdate(BaseModel):
+    name: Optional[str] = None
+    version: Optional[str] = None
+    is_active: Optional[bool] = None
+    items: Optional[List[FMEAItemCreate]] = None
+
+
+class FMEAOut(FMEABase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    items: List[FMEAItemOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+# ============ 模块 F: 环境核查 ============
+
+class EnvironmentLogBase(BaseModel):
+    log_date: datetime
+    factory: Optional[str] = None
+    area: Optional[str] = None
+    shift: Optional[str] = None
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    cleanliness: Optional[str] = None
+    particles: Optional[float] = None
+    pressure: Optional[float] = None
+    result: str = "OK"
+    inspector_id: Optional[int] = None
+    remark: Optional[str] = None
+
+
+class EnvironmentLogCreate(EnvironmentLogBase):
+    pass
+
+
+class EnvironmentLogOut(EnvironmentLogBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ============ 模块 G: 人员资质 / 培训 / 技能矩阵 ============
+
+class QualificationBase(BaseModel):
+    user_id: int
+    equipment_id: Optional[int] = None
+    skill_level: SkillLevel = SkillLevel.TRAINING
+    certified_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    certified_by: Optional[str] = None
+    score: Optional[float] = None
+    remark: Optional[str] = None
+    is_active: bool = True
+
+
+class QualificationCreate(QualificationBase):
+    pass
+
+
+class QualificationUpdate(BaseModel):
+    skill_level: Optional[SkillLevel] = None
+    certified_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    certified_by: Optional[str] = None
+    score: Optional[float] = None
+    remark: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class QualificationOut(QualificationBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TrainingAttendeeBase(BaseModel):
+    user_id: int
+    attendance: str = "PRESENT"
+    score: Optional[float] = None
+    passed: bool = False
+    remark: Optional[str] = None
+
+
+class TrainingAttendeeCreate(TrainingAttendeeBase):
+    pass
+
+
+class TrainingAttendeeOut(TrainingAttendeeBase):
+    id: int
+    training_id: int
+
+    class Config:
+        from_attributes = True
+
+
+class TrainingBase(BaseModel):
+    name: str = Field(..., max_length=255)
+    equipment_id: Optional[int] = None
+    trainer_id: Optional[int] = None
+    planned_date: Optional[datetime] = None
+    completed_date: Optional[datetime] = None
+    content: Optional[str] = None
+    status: str = "PLANNED"
+    remark: Optional[str] = None
+
+
+class TrainingCreate(TrainingBase):
+    attendees: List[TrainingAttendeeCreate] = Field(default_factory=list)
+
+
+class TrainingOut(TrainingBase):
+    id: int
+    created_at: datetime
+    attendees: List[TrainingAttendeeOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+# ============ 模块 H: 资产盘点 / 调拨报废 ============
+
+class AssetInventoryLineBase(BaseModel):
+    equipment_id: int
+    system_status: Optional[str] = None
+    actual_found: bool = False
+    location_match: bool = False
+    result: str = "PENDING"
+    checked_by: Optional[int] = None
+    checked_at: Optional[datetime] = None
+    remark: Optional[str] = None
+
+
+class AssetInventoryLineUpdate(BaseModel):
+    actual_found: Optional[bool] = None
+    location_match: Optional[bool] = None
+    result: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class AssetInventoryLineOut(AssetInventoryLineBase):
+    id: int
+    inventory_id: int
+
+    class Config:
+        from_attributes = True
+
+
+class AssetInventoryBase(BaseModel):
+    name: str = Field(..., max_length=255)
+    plan_date: Optional[datetime] = None
+    status: InventoryStatus = InventoryStatus.PLANNED
+    remark: Optional[str] = None
+
+
+class AssetInventoryCreate(AssetInventoryBase):
+    equipment_ids: List[int] = Field(default_factory=list, description="一次性纳入盘点的设备")
+
+
+class AssetInventoryOut(AssetInventoryBase):
+    id: int
+    inventory_no: str
+    created_by: Optional[int] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+    lines: List[AssetInventoryLineOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+class AssetApplicationBase(BaseModel):
+    type: ApplicationType
+    equipment_id: int
+    from_location: Optional[str] = None
+    to_location: Optional[str] = None
+    reason: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class AssetApplicationCreate(AssetApplicationBase):
+    pass
+
+
+class AssetApplicationOut(AssetApplicationBase):
+    id: int
+    application_no: str
+    status: ApplicationStatus
+    applicant_id: Optional[int] = None
+    approver_id: Optional[int] = None
+    applied_at: datetime
+    approved_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AssetApplicationApprove(BaseModel):
+    decision: str = Field(..., description="APPROVED/REJECTED")
+    remark: Optional[str] = None
+
+
+# ============ 模块 I: 产品 / 生产记录 ============
+
+class ProductBase(BaseModel):
+    code: str = Field(..., max_length=64)
+    name: str = Field(..., max_length=128)
+    spec: Optional[str] = None
+    unit: str = "片"
+    target_cycle: Optional[float] = Field(None, gt=0)
+    remark: Optional[str] = None
+    is_active: bool = True
+
+
+class ProductCreate(ProductBase):
+    pass
+
+
+class ProductUpdate(BaseModel):
+    name: Optional[str] = None
+    spec: Optional[str] = None
+    unit: Optional[str] = None
+    target_cycle: Optional[float] = None
+    remark: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class ProductOut(ProductBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProductionRecordBase(BaseModel):
+    equipment_id: int
+    product_id: Optional[int] = None
+    batch_no: Optional[str] = None
+    plan_qty: int = 0
+    input_qty: int = 0
+    good_qty: int = 0
+    defect_qty: int = 0
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    duration_minutes: Optional[float] = None
+    ideal_cycle: Optional[float] = None
+    operator_id: Optional[int] = None
+    remark: Optional[str] = None
+
+
+class ProductionRecordCreate(ProductionRecordBase):
+    pass
+
+
+class ProductionRecordUpdate(BaseModel):
+    product_id: Optional[int] = None
+    batch_no: Optional[str] = None
+    plan_qty: Optional[int] = None
+    input_qty: Optional[int] = None
+    good_qty: Optional[int] = None
+    defect_qty: Optional[int] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    duration_minutes: Optional[float] = None
+    ideal_cycle: Optional[float] = None
+    operator_id: Optional[int] = None
+    remark: Optional[str] = None
+
+
+class ProductionRecordOut(ProductionRecordBase):
+    id: int
+    record_no: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ============ 看板聚合响应 ============
+
+class DashboardEquipmentItem(BaseModel):
+    id: int
+    name: str
+    asset_no: Optional[str] = None
+    factory: Optional[str] = None
+    area: Optional[str] = None
+    current_status: EquipmentStatus
+    status_start_time: datetime
+    status_duration_minutes: float
+    # 最近一次状态变更信息
+    last_from_status: Optional[EquipmentStatus] = None
+    last_to_status: Optional[EquipmentStatus] = None
+    last_reason_code: Optional[str] = None
+    last_reason_detail: Optional[str] = None
+    last_operator_name: Optional[str] = None
+    last_change_time: Optional[datetime] = None
+    updated_at: datetime
+    open_work_orders: int = 0
+    last_work_order_no: Optional[str] = None
+    last_production_no: Optional[str] = None
+    last_product_name: Optional[str] = None
+    last_good_qty: Optional[int] = None
+
+
+class DashboardStatusLogItem(BaseModel):
+    id: int
+    equipment_id: int
+    equipment_name: Optional[str] = None
+    equipment_factory: Optional[str] = None
+    equipment_area: Optional[str] = None
+    from_status: Optional[EquipmentStatus] = None
+    to_status: EquipmentStatus
+    reason_code: Optional[str] = None
+    start_time: datetime
+    duration_minutes: Optional[float] = None
+
+
+class DashboardWorkOrderItem(BaseModel):
+    id: int
+    order_no: str
+    type: WorkOrderType
+    status: WorkOrderStatus
+    equipment_id: int
+    equipment_name: Optional[str] = None
+    title: str
+    created_at: datetime
+
+
+class DashboardProductionItem(BaseModel):
+    id: int
+    record_no: str
+    equipment_id: int
+    equipment_name: Optional[str] = None
+    product_name: Optional[str] = None
+    batch_no: Optional[str] = None
+    good_qty: int = 0
+    defect_qty: int = 0
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+
+
+class DashboardSummary(BaseModel):
+    total: int = 0
+    running: int = 0
+    down: int = 0
+    idle: int = 0
+    pm: int = 0
+    pm_overtime: int = 0  # PM 进行中且已超时的设备数
+    engineering: int = 0
+    offline: int = 0
+    open_work_orders: int = 0
+    today_production: int = 0
+    today_good: int = 0
+    today_defect: int = 0
+    oee: float = 0.0
+
+
+class DashboardOut(BaseModel):
+    summary: DashboardSummary
+    status_counts: dict
+    equipments: List[DashboardEquipmentItem]
+    recent_status_logs: List[DashboardStatusLogItem]
+    recent_work_orders: List[DashboardWorkOrderItem]
+    recent_production: List[DashboardProductionItem]
+
+
+# ============ 模块 J: 系统字典/配置 ============
+
+class DictionaryItemBase(BaseModel):
+    category: DictionaryCategory
+    code: str = Field(..., max_length=64)
+    label: str = Field(..., max_length=128)
+    value: Optional[str] = None
+    sort_order: int = 0
+    is_active: bool = True
+    remark: Optional[str] = None
+
+
+class DictionaryItemCreate(DictionaryItemBase):
+    pass
+
+
+class DictionaryItemUpdate(BaseModel):
+    label: Optional[str] = None
+    value: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+    remark: Optional[str] = None
+
+
+class DictionaryItemOut(DictionaryItemBase):
+    id: int
+    is_system: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ============ 模块 K: 工艺文件 ============
+
+class ProcessDocumentOut(BaseModel):
+    id: int
+    equipment_id: int
+    category: Optional[str] = None
+    doc_name: str
+    doc_type: Optional[str] = None
+    version: Optional[str] = None
+    version_seq: Optional[int] = None
+    group_id: Optional[str] = None
+    is_latest: Optional[bool] = None
+    status: str
+    effective_date: Optional[datetime] = None
+    batch_no: Optional[str] = None
+    shift: Optional[str] = None
+    production_date: Optional[datetime] = None
+    file_size: Optional[int] = None
+    file_type: Optional[str] = None
+    description: Optional[str] = None
+    uploaded_by: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProcessDocumentUpdate(BaseModel):
+    """仅允许修改元数据；状态、版本、文件通过专用 API 变更。"""
+    doc_name: Optional[str] = None
+    doc_type: Optional[str] = None
+    version: Optional[str] = None
+    effective_date: Optional[datetime] = None
+    description: Optional[str] = None
+    batch_no: Optional[str] = None
+    shift: Optional[str] = None
+    production_date: Optional[datetime] = None
+
+
+class ProcessDocumentStatusTransition(BaseModel):
+    """状态流转请求体。
+
+    合法流转：
+    - 草稿 → 生效 (需 effective_date；自动作废同 group 旧生效版)
+    - 草稿 → 作废
+    - 生效 → 作废
+    其余流转(如生效→草稿、作废→任意)均非法。
+    """
+    status: str  # 目标状态：生效 / 作废
+    effective_date: Optional[datetime] = None
+    remark: Optional[str] = None

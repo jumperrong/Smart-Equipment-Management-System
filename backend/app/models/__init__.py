@@ -1,0 +1,817 @@
+from datetime import datetime
+from sqlalchemy import (
+    Column, Integer, String, DateTime, ForeignKey, Boolean, Text, Enum as SAEnum,
+    Float, JSON, UniqueConstraint, Index, text,
+)
+from sqlalchemy.orm import relationship
+from enum import Enum
+
+from app.core.database import Base
+
+
+class UserRole(str, Enum):
+    ADMIN = "admin"
+    ENGINEER = "engineer"
+    PROCESS_ENGINEER = "process_engineer"
+    OPERATOR = "operator"
+    VIEWER = "viewer"
+
+
+class EquipmentStatus(str, Enum):
+    RUN = "RUN"
+    IDLE = "IDLE"
+    DOWN = "DOWN"
+    PM = "PM"
+    ENGINEERING = "ENGINEERING"
+    PROCESS_VALIDATION = "PROCESS_VALIDATION"  # 工艺验证
+    OTHER = "OTHER"  # 其他（需输入说明）
+    OFFLINE = "OFFLINE"
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(64), unique=True, index=True, nullable=False)
+    full_name = Column(String(128), nullable=True)
+    hashed_password = Column(String(255), nullable=False)
+    role = Column(SAEnum(UserRole), default=UserRole.OPERATOR, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    status_logs = relationship("EquipmentStatusLog", back_populates="operator")
+    inspection_records = relationship("InspectionRecord", back_populates="inspector")
+    work_orders = relationship("WorkOrder", back_populates="assignee")
+    reports = relationship("RepairReport", back_populates="reporter")
+    qualifications = relationship("Qualification", back_populates="user")
+    training_attendees = relationship("TrainingAttendee", back_populates="user")
+
+
+class Equipment(Base):
+    __tablename__ = "equipments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(128), nullable=False)
+    asset_no = Column(String(64), unique=True, index=True)
+    factory = Column(String(64), nullable=True, comment="厂区")
+    area = Column(String(64), nullable=True, comment="区域")
+    model = Column(String(128), nullable=True, comment="机型")
+    vendor = Column(String(128), nullable=True, comment="供应商")
+    serial_no = Column(String(128), nullable=True, comment="序列号")
+    install_date = Column(DateTime, nullable=True)
+    theoretical_cycle = Column(Float, nullable=True, comment="理论节拍(秒/片)")
+    spec = Column(JSON, default=dict, nullable=True, comment="规格参数JSON")
+    description = Column(Text, nullable=True)
+    current_status = Column(SAEnum(EquipmentStatus), default=EquipmentStatus.OFFLINE)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    status_logs = relationship("EquipmentStatusLog", back_populates="equipment", cascade="all, delete-orphan")
+    attachments = relationship("EquipmentAttachment", back_populates="equipment", cascade="all, delete-orphan")
+    process_documents = relationship("ProcessDocument", back_populates="equipment", cascade="all, delete-orphan")
+    spare_parts = relationship("EquipmentSparePart", back_populates="equipment", cascade="all, delete-orphan")
+    inspection_templates = relationship("InspectionTemplate", back_populates="equipment")
+    work_orders = relationship("WorkOrder", back_populates="equipment")
+    reports = relationship("RepairReport", back_populates="equipment")
+    pm_plans = relationship("PMPlan", back_populates="equipment")
+    d8_reports = relationship("D8Report", back_populates="equipment")
+    fmeas = relationship("FMEA", back_populates="equipment")
+    qualifications = relationship("Qualification", back_populates="equipment")
+    trainings = relationship("Training", back_populates="equipment")
+    asset_applications = relationship("AssetApplication", back_populates="equipment")
+    asset_inventory_lines = relationship("AssetInventoryLine", back_populates="equipment")
+    production_records = relationship("ProductionRecord", back_populates="equipment")
+
+
+class EquipmentStatusLog(Base):
+    __tablename__ = "equipment_status_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    from_status = Column(SAEnum(EquipmentStatus), nullable=True)
+    to_status = Column(SAEnum(EquipmentStatus), nullable=False)
+    start_time = Column(DateTime, default=datetime.utcnow, nullable=False)
+    end_time = Column(DateTime, nullable=True)
+    duration_minutes = Column(Float, nullable=True, comment="持续时长(分钟)")
+    reason_code = Column(String(64), nullable=True, comment="原因码/分类")
+    reason_detail = Column(String(255), nullable=True, comment="详细原因")
+    operator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    remark = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    equipment = relationship("Equipment", back_populates="status_logs")
+    operator = relationship("User", back_populates="status_logs")
+
+
+# ============ 模块 A: 设备档案增强 ============
+
+class EquipmentAttachment(Base):
+    __tablename__ = "equipment_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    filename = Column(String(255), nullable=False, comment="原始文件名")
+    stored_path = Column(String(512), nullable=False, comment="存储路径")
+    file_size = Column(Integer, nullable=True, comment="字节")
+    file_type = Column(String(64), nullable=True, comment="MIME类型")
+    category = Column(String(64), nullable=True, comment="分类: SOP/说明书/图纸/其他")
+    description = Column(String(255), nullable=True)
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    equipment = relationship("Equipment", back_populates="attachments")
+
+
+# ============ 模块 D: 备件管理 ============
+
+class SparePart(Base):
+    __tablename__ = "spare_parts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sku = Column(String(64), unique=True, index=True, nullable=False, comment="备件编号")
+    name = Column(String(128), nullable=False, comment="名称")
+    spec = Column(String(255), nullable=True, comment="规格型号")
+    brand = Column(String(128), nullable=True, comment="品牌")
+    unit = Column(String(32), default="个", comment="单位")
+    safety_stock = Column(Integer, default=0, comment="安全库存")
+    current_stock = Column(Integer, default=0, comment="当前库存")
+    unit_price = Column(Float, default=0, nullable=False, comment="单价(元)")
+    location = Column(String(128), nullable=True, comment="库位")
+    remark = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    movements = relationship("SparePartMovement", back_populates="spare_part", cascade="all, delete-orphan")
+    usages = relationship("SparePartUsage", back_populates="spare_part")
+    equipments = relationship("EquipmentSparePart", back_populates="spare_part")
+
+
+class EquipmentSparePart(Base):
+    """设备-易损件关联（一机一档中的易损件清单）"""
+    __tablename__ = "equipment_spare_parts"
+    __table_args__ = (UniqueConstraint("equipment_id", "spare_part_id", name="uq_eq_sp"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    spare_part_id = Column(Integer, ForeignKey("spare_parts.id"), nullable=False, index=True)
+    qty_per = Column(Integer, default=1, comment="单台用量")
+    remark = Column(String(255), nullable=True)
+
+    equipment = relationship("Equipment", back_populates="spare_parts")
+    spare_part = relationship("SparePart", back_populates="equipments")
+
+
+class SparePartMovement(Base):
+    """出入库记录"""
+    __tablename__ = "spare_part_movements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    spare_part_id = Column(Integer, ForeignKey("spare_parts.id"), nullable=False, index=True)
+    movement_type = Column(String(16), nullable=False, comment="IN入库/OUT出库/ADJUST调整")
+    qty = Column(Integer, nullable=False, comment="数量(正数)")
+    before_stock = Column(Integer, nullable=True)
+    after_stock = Column(Integer, nullable=True)
+    ref_type = Column(String(32), nullable=True, comment="来源类型: WORK_ORDER/MANUAL/INIT")
+    ref_id = Column(Integer, nullable=True, comment="来源ID")
+    operator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    remark = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    spare_part = relationship("SparePart", back_populates="movements")
+
+
+class SparePartUsage(Base):
+    """工单领用备件"""
+    __tablename__ = "spare_part_usages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=False, index=True)
+    spare_part_id = Column(Integer, ForeignKey("spare_parts.id"), nullable=False, index=True)
+    qty = Column(Integer, nullable=False, default=1)
+    movement_id = Column(Integer, ForeignKey("spare_part_movements.id"), nullable=True, comment="关联出库记录")
+    remark = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    work_order = relationship("WorkOrder", back_populates="spare_usages")
+    spare_part = relationship("SparePart", back_populates="usages")
+
+
+# ============ 模块 B: 点检与巡检 ============
+
+class InspectionTemplate(Base):
+    """点检模板（按设备）"""
+    __tablename__ = "inspection_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(128), nullable=False)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=True, index=True, comment="关联设备(可选)")
+    frequency = Column(String(16), default="DAILY", comment="频率: DAILY/WEEKLY/MONTHLY")
+    is_active = Column(Boolean, default=True)
+    description = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    equipment = relationship("Equipment", back_populates="inspection_templates")
+    items = relationship("InspectionItem", back_populates="template", cascade="all, delete-orphan")
+    records = relationship("InspectionRecord", back_populates="template")
+
+
+class InspectionItem(Base):
+    """点检项目"""
+    __tablename__ = "inspection_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, ForeignKey("inspection_templates.id"), nullable=False, index=True)
+    seq = Column(Integer, default=0, comment="顺序")
+    name = Column(String(128), nullable=False, comment="检查项名称")
+    standard = Column(String(255), nullable=True, comment="标准/方法")
+    required = Column(Boolean, default=True, comment="是否必检")
+
+    template = relationship("InspectionTemplate", back_populates="items")
+
+
+class InspectionRecord(Base):
+    """点检记录"""
+    __tablename__ = "inspection_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, ForeignKey("inspection_templates.id"), nullable=False, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=True, index=True)
+    shift = Column(String(16), nullable=True, comment="班次: A/B/C")
+    inspect_time = Column(DateTime, default=datetime.utcnow, nullable=False)
+    inspector_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    overall_result = Column(String(16), default="OK", comment="整体结果: OK/NG")
+    remark = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    template = relationship("InspectionTemplate", back_populates="records")
+    inspector = relationship("User", back_populates="inspection_records")
+    results = relationship("InspectionResult", back_populates="record", cascade="all, delete-orphan")
+
+
+class InspectionResult(Base):
+    """点检逐项结果"""
+    __tablename__ = "inspection_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    record_id = Column(Integer, ForeignKey("inspection_records.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("inspection_items.id"), nullable=True)
+    item_name = Column(String(128), nullable=False, comment="快照: 项目名")
+    result = Column(String(16), nullable=False, comment="OK/NG/NA")
+    value = Column(String(128), nullable=True, comment="实测值")
+    remark = Column(String(255), nullable=True)
+
+    record = relationship("InspectionRecord", back_populates="results")
+
+
+# ============ 模块 C: 维护管理(PM) + 故障维修 ============
+
+class WorkOrderType(str, Enum):
+    PM = "PM"            # 预防性维护
+    REPAIR = "REPAIR"    # 故障维修
+    REPORT = "REPORT"    # 报修转单
+
+
+class WorkOrderStatus(str, Enum):
+    CREATED = "CREATED"        # 已创建
+    ASSIGNED = "ASSIGNED"      # 已派工
+    IN_PROGRESS = "IN_PROGRESS"  # 执行中
+    PENDING_REVIEW = "PENDING_REVIEW"  # 待验收
+    COMPLETED = "COMPLETED"    # 已完成
+    CANCELLED = "CANCELLED"    # 已取消
+
+
+class FaultCategory(str, Enum):
+    MECHANICAL = "MECHANICAL"  # 机械
+    ELECTRICAL = "ELECTRICAL"  # 电气
+    PROCESS = "PROCESS"        # 工艺
+    SOFTWARE = "SOFTWARE"      # 软件
+    CONSUMABLE = "CONSUMABLE"  # 耗材/备件
+    OTHER = "OTHER"            # 其他
+
+
+class PMPlan(Base):
+    """预防性维护计划"""
+    __tablename__ = "pm_plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    name = Column(String(128), nullable=False, comment="计划名称")
+    cycle_days = Column(Integer, nullable=False, comment="周期(天)")
+    items = Column(JSON, default=list, comment="维护项目清单")
+    next_due_date = Column(DateTime, nullable=True, comment="下次到期")
+    planned_start_hour = Column(Integer, default=9, comment="计划开始时段(0-23点)")
+    planned_duration_minutes = Column(Integer, default=120, comment="计划持续时长(分钟)")
+    is_active = Column(Boolean, default=True)
+    last_executed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    equipment = relationship("Equipment", back_populates="pm_plans")
+
+
+class RepairReport(Base):
+    """报修单"""
+    __tablename__ = "repair_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    reporter_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    phenomenon = Column(Text, nullable=False, comment="故障现象")
+    urgency = Column(String(16), default="NORMAL", comment="紧急度: LOW/NORMAL/HIGH/CRITICAL")
+    reported_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True, comment="转工单")
+    status = Column(String(16), default="OPEN", comment="OPEN/CONVERTED/CLOSED")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    equipment = relationship("Equipment", back_populates="reports")
+    reporter = relationship("User", back_populates="reports")
+
+
+class WorkOrder(Base):
+    """统一工单（PM/维修/报修）"""
+    __tablename__ = "work_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_no = Column(String(32), unique=True, index=True, nullable=False, comment="工单号")
+    type = Column(SAEnum(WorkOrderType), nullable=False)
+    status = Column(SAEnum(WorkOrderStatus), default=WorkOrderStatus.CREATED, nullable=False)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    title = Column(String(255), nullable=False, comment="标题/概述")
+    description = Column(Text, nullable=True, comment="任务描述")
+    assignee_id = Column(Integer, ForeignKey("users.id"), nullable=True, comment="负责人")
+    source_report_id = Column(Integer, ForeignKey("repair_reports.id"), nullable=True, comment="来源报修单")
+    pm_plan_id = Column(Integer, ForeignKey("pm_plans.id"), nullable=True, comment="来源PM计划")
+    status_log_id = Column(Integer, ForeignKey("equipment_status_logs.id"), nullable=True, comment="关联状态日志(DOWN)")
+    # 故障分析
+    fault_category = Column(SAEnum(FaultCategory), nullable=True, comment="故障分类")
+    root_cause = Column(Text, nullable=True, comment="根因")
+    solution = Column(Text, nullable=True, comment="处置措施")
+    prevention = Column(Text, nullable=True, comment="预防措施")
+    # 时间
+    planned_start = Column(DateTime, nullable=True)
+    planned_end = Column(DateTime, nullable=True)
+    actual_start = Column(DateTime, nullable=True)
+    actual_end = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    remark = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    equipment = relationship("Equipment", back_populates="work_orders")
+    assignee = relationship("User", back_populates="work_orders")
+    five_whys = relationship("FiveWhy", back_populates="work_order", cascade="all, delete-orphan")
+    spare_usages = relationship("SparePartUsage", back_populates="work_order", cascade="all, delete-orphan")
+
+
+class FiveWhy(Base):
+    """5Why 根因分析记录"""
+    __tablename__ = "five_whys"
+
+    id = Column(Integer, primary_key=True, index=True)
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=False, index=True)
+    seq = Column(Integer, nullable=False, comment="第几问: 1-5")
+    question = Column(Text, nullable=False, comment="为什么...")
+    answer = Column(Text, nullable=True, comment="原因")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    work_order = relationship("WorkOrder", back_populates="five_whys")
+
+
+# ============ 模块 E: 品管工具 (8D / FMEA) ============
+
+class D8Status(str, Enum):
+    OPEN = "OPEN"
+    IN_PROGRESS = "IN_PROGRESS"
+    CLOSED = "CLOSED"
+
+
+class D8Report(Base):
+    """8D 报告"""
+    __tablename__ = "d8_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    report_no = Column(String(32), unique=True, index=True, nullable=False)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True, comment="关联工单")
+    title = Column(String(255), nullable=False)
+    problem = Column(Text, nullable=True, comment="D0 问题描述")
+    d1_team = Column(Text, nullable=True, comment="D1 团队")
+    d2_problem_desc = Column(Text, nullable=True, comment="D2 问题定义")
+    d3_interim = Column(Text, nullable=True, comment="D3 临时围堵措施")
+    d4_root_cause = Column(Text, nullable=True, comment="D4 根本原因")
+    d5_permanent = Column(Text, nullable=True, comment="D5 永久纠正措施")
+    d6_implement = Column(Text, nullable=True, comment="D6 措施实施与验证")
+    d7_prevent = Column(Text, nullable=True, comment="D7 预防再发生")
+    d8_recognition = Column(Text, nullable=True, comment="D8 团队致谢")
+    status = Column(SAEnum(D8Status), default=D8Status.OPEN, nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    closed_at = Column(DateTime, nullable=True)
+
+    equipment = relationship("Equipment", back_populates="d8_reports")
+
+
+class FMEA(Base):
+    """FMEA 失效模式与影响分析"""
+    __tablename__ = "fmeas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    version = Column(String(32), default="1.0")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    equipment = relationship("Equipment", back_populates="fmeas")
+    items = relationship("FMEAItem", back_populates="fmea", cascade="all, delete-orphan")
+
+
+class FMEAItem(Base):
+    """FMEA 失效条目"""
+    __tablename__ = "fmea_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    fmea_id = Column(Integer, ForeignKey("fmeas.id"), nullable=False, index=True)
+    seq = Column(Integer, default=0)
+    process_step = Column(String(128), nullable=True, comment="过程/功能")
+    failure_mode = Column(String(255), nullable=False, comment="失效模式")
+    failure_effect = Column(Text, nullable=True, comment="失效影响")
+    cause = Column(Text, nullable=True, comment="失效原因")
+    severity = Column(Integer, default=5, comment="严重度 S 1-10")
+    occurrence = Column(Integer, default=5, comment="频度 O 1-10")
+    detection = Column(Integer, default=5, comment="探测度 D 1-10")
+    rpn = Column(Integer, default=125, comment="风险顺序数 RPN=S*O*D")
+    recommended_action = Column(Text, nullable=True, comment="建议措施")
+    action_owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    action_due_date = Column(DateTime, nullable=True)
+    action_status = Column(String(16), default="OPEN", comment="OPEN/IN_PROGRESS/DONE")
+    action_result = Column(Text, nullable=True)
+    remark = Column(String(255), nullable=True)
+
+    fmea = relationship("FMEA", back_populates="items")
+
+
+# ============ 模块 F: 环境核查 ============
+
+class EnvironmentLog(Base):
+    """洁净与环境参数核查表"""
+    __tablename__ = "environment_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    log_date = Column(DateTime, nullable=False, index=True, comment="核查时间")
+    factory = Column(String(64), nullable=True)
+    area = Column(String(64), nullable=True, comment="区域")
+    shift = Column(String(16), nullable=True)
+    temperature = Column(Float, nullable=True, comment="温度℃")
+    humidity = Column(Float, nullable=True, comment="湿度%")
+    cleanliness = Column(String(32), nullable=True, comment="洁净度等级")
+    particles = Column(Float, nullable=True, comment="粒子数")
+    pressure = Column(Float, nullable=True, comment="压差Pa")
+    result = Column(String(16), default="OK", comment="OK/NG")
+    inspector_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    remark = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ============ 模块 G: 人员资质 / 培训 / 技能矩阵 ============
+
+class SkillLevel(str, Enum):
+    PRIMARY = "PRIMARY"        # 主操作
+    SECONDARY = "SECONDARY"   # 副操作
+    TRAINING = "TRAINING"      # 培训中
+    NONE = "NONE"
+
+
+class Qualification(Base):
+    """人员资质考核表 (设备操作授权)"""
+    __tablename__ = "qualifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=True, index=True, comment="null=通用资质")
+    skill_level = Column(SAEnum(SkillLevel), default=SkillLevel.TRAINING, nullable=False)
+    certified_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    certified_by = Column(String(64), nullable=True, comment="考核人")
+    score = Column(Float, nullable=True, comment="考核成绩")
+    remark = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="qualifications")
+    equipment = relationship("Equipment", back_populates="qualifications")
+
+
+class Training(Base):
+    """培训计划"""
+    __tablename__ = "trainings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=True)
+    trainer_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    planned_date = Column(DateTime, nullable=True)
+    completed_date = Column(DateTime, nullable=True)
+    content = Column(Text, nullable=True)
+    status = Column(String(16), default="PLANNED", comment="PLANNED/IN_PROGRESS/COMPLETED/CANCELLED")
+    remark = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    equipment = relationship("Equipment", back_populates="trainings")
+    attendees = relationship("TrainingAttendee", back_populates="training", cascade="all, delete-orphan")
+
+
+class TrainingAttendee(Base):
+    """培训记录 (师带徒)"""
+    __tablename__ = "training_attendees"
+
+    id = Column(Integer, primary_key=True, index=True)
+    training_id = Column(Integer, ForeignKey("trainings.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    attendance = Column(String(16), default="PRESENT", comment="PRESENT/ABSENT")
+    score = Column(Float, nullable=True)
+    passed = Column(Boolean, default=False)
+    remark = Column(String(255), nullable=True)
+
+    training = relationship("Training", back_populates="attendees")
+    user = relationship("User", back_populates="training_attendees")
+
+
+# ============ 模块 H: 资产盘点 / 调拨报废 ============
+
+class InventoryStatus(str, Enum):
+    PLANNED = "PLANNED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+
+
+class AssetInventory(Base):
+    """资产盘点任务"""
+    __tablename__ = "asset_inventories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    inventory_no = Column(String(32), unique=True, index=True)
+    name = Column(String(255), nullable=False)
+    plan_date = Column(DateTime, nullable=True)
+    status = Column(SAEnum(InventoryStatus), default=InventoryStatus.PLANNED, nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    remark = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    lines = relationship("AssetInventoryLine", back_populates="inventory", cascade="all, delete-orphan")
+
+
+class AssetInventoryLine(Base):
+    """盘点明细"""
+    __tablename__ = "asset_inventory_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    inventory_id = Column(Integer, ForeignKey("asset_inventories.id"), nullable=False, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False)
+    system_status = Column(String(64), nullable=True, comment="台账状态快照")
+    actual_found = Column(Boolean, default=False, comment="现场是否找到")
+    location_match = Column(Boolean, default=False, comment="位置是否一致")
+    result = Column(String(16), default="PENDING", comment="PENDING/MATCH/MISMATCH/MISSING")
+    checked_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    checked_at = Column(DateTime, nullable=True)
+    remark = Column(String(255), nullable=True)
+
+    inventory = relationship("AssetInventory", back_populates="lines")
+    equipment = relationship("Equipment", back_populates="asset_inventory_lines")
+
+
+class ApplicationType(str, Enum):
+    TRANSFER = "TRANSFER"  # 调拨
+    SCRAP = "SCRAP"        # 报废
+
+
+class ApplicationStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    COMPLETED = "COMPLETED"
+
+
+class AssetApplication(Base):
+    """设备调拨/报废申请表"""
+    __tablename__ = "asset_applications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    application_no = Column(String(32), unique=True, index=True)
+    type = Column(SAEnum(ApplicationType), nullable=False)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    from_location = Column(String(128), nullable=True)
+    to_location = Column(String(128), nullable=True)
+    reason = Column(Text, nullable=True)
+    status = Column(SAEnum(ApplicationStatus), default=ApplicationStatus.PENDING, nullable=False)
+    applicant_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approver_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    applied_at = Column(DateTime, default=datetime.utcnow)
+    approved_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    remark = Column(String(255), nullable=True)
+
+    equipment = relationship("Equipment", back_populates="asset_applications")
+
+
+# ============ 模块 I: 产品 / 生产记录 (OEE 支撑) ============
+
+class Product(Base):
+    """产品基础信息"""
+    __tablename__ = "products"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(64), unique=True, index=True, nullable=False, comment="产品编号")
+    name = Column(String(128), nullable=False, comment="产品名称")
+    spec = Column(String(255), nullable=True, comment="规格型号")
+    unit = Column(String(32), default="片", comment="单位")
+    target_cycle = Column(Float, nullable=True, comment="理论节拍(秒/件)")
+    remark = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    production_records = relationship("ProductionRecord", back_populates="product")
+
+
+class ProductionRecord(Base):
+    """生产记录（用于 OEE 计算）"""
+    __tablename__ = "production_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    record_no = Column(String(32), unique=True, index=True, nullable=False, comment="记录编号")
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+    batch_no = Column(String(64), nullable=True, comment="批次号")
+    plan_qty = Column(Integer, default=0, comment="计划投入量")
+    input_qty = Column(Integer, default=0, comment="实际投入量")
+    good_qty = Column(Integer, default=0, comment="合格数量")
+    defect_qty = Column(Integer, default=0, comment="不合格数量")
+    start_time = Column(DateTime, nullable=True, comment="生产开始时间")
+    end_time = Column(DateTime, nullable=True, comment="生产结束时间")
+    duration_minutes = Column(Float, nullable=True, comment="运行时长(分钟)")
+    ideal_cycle = Column(Float, nullable=True, comment="理论节拍(秒/件)快照")
+    operator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    remark = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    equipment = relationship("Equipment", back_populates="production_records")
+    product = relationship("Product", back_populates="production_records")
+
+
+# ============ 模块 J: 系统字典/配置 ============
+
+class DictionaryCategory(str, Enum):
+    """字典分类"""
+    FACTORY = "factory"                 # 厂区
+    AREA = "area"                        # 区域
+    EQUIPMENT_STATUS = "equipment_status"  # 设备状态
+    WORK_ORDER_TYPE = "work_order_type"  # 工单类型
+    SPARE_PART_CATEGORY = "spare_part_category"  # 备件分类
+    REASON_CODE = "reason_code"          # 状态变更原因
+    CUSTOM = "custom"                    # 自定义
+
+
+class DictionaryItem(Base):
+    """系统字典项（管理员可配置的选项值）"""
+    __tablename__ = "dictionary_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    category = Column(SAEnum(DictionaryCategory), nullable=False, index=True, comment="字典分类")
+    code = Column(String(64), nullable=False, comment="编码(英文/简写)")
+    label = Column(String(128), nullable=False, comment="显示名称")
+    value = Column(String(128), nullable=True, comment="值(默认等于code)")
+    sort_order = Column(Integer, default=0, comment="排序")
+    is_active = Column(Boolean, default=True, nullable=False, comment="是否启用")
+    is_system = Column(Boolean, default=False, nullable=False, comment="系统内置(不可删除)")
+    remark = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_dict_category_code", "category", "code", unique=True),
+    )
+
+
+class RolePermission(Base):
+    """角色-功能权限映射表。每行记录某角色对某 feature_key 是否放行。
+
+    启动时由 permission_service.seed_default_permissions 把缺失的 (role, feature_key)
+    按 constants.DEFAULT_ROLE_MATRIX 补齐。管理员可在前端调整 allowed 值。
+    """
+    __tablename__ = "role_permissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    role = Column(SAEnum(UserRole), nullable=False, index=True)
+    feature_key = Column(String(64), nullable=False, index=True)
+    allowed = Column(Boolean, default=True, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("role", "feature_key", name="uq_role_feature"),
+    )
+
+
+class SystemSetting(Base):
+    """系统设置项（环境变量可视化编辑）。
+
+    存储管理员通过界面调整的可配置环境变量值。
+    修改后由 system_setting_service 写入 .env 文件，重启服务后生效。
+    """
+    __tablename__ = "system_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(64), unique=True, index=True, nullable=False, comment="环境变量名")
+    value = Column(Text, nullable=True, comment="当前设置的值(JSON编码: string/int/float/bool/list)")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+
+class IPWhitelist(Base):
+    """IP 白名单。
+
+    - enabled=False 表示禁用白名单(允许所有 IP 访问)
+    - 单条记录 ip="*" 表示允许所有；通常配合 enabled=True 起到"开放模式"作用
+    - 127.0.0.1 / ::1 永远隐式允许(避免锁死本机)
+    """
+    __tablename__ = "ip_whitelist"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ip = Column(String(64), unique=True, index=True, nullable=False, comment="IPv4/IPv6 地址或 CIDR")
+    label = Column(String(128), nullable=True, comment="备注名")
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class IPAccessLog(Base):
+    """IP 访问日志。
+
+    - 记录未通过白名单的访问尝试
+    - status: PENDING(待审) / APPROVED(已批准,已加入白名单) / REJECTED(已拒绝)
+    - 管理员可在界面把 PENDING 的 IP 一键加入白名单
+    """
+    __tablename__ = "ip_access_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ip = Column(String(64), nullable=False, index=True, comment="访问者 IP")
+    path = Column(String(255), nullable=True, comment="请求路径")
+    method = Column(String(16), nullable=True, comment="HTTP 方法")
+    user_agent = Column(String(512), nullable=True)
+    status = Column(String(16), default="PENDING", nullable=False, comment="PENDING/APPROVED/REJECTED")
+    attempt_count = Column(Integer, default=1, nullable=False, comment="尝试次数")
+    first_attempt_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_attempt_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    remark = Column(String(255), nullable=True)
+
+    __table_args__ = (
+        Index("ix_ip_access_logs_ip_status", "ip", "status"),
+    )
+
+
+# ============ 模块 K: 工艺文件 ============
+
+class ProcessDocument(Base):
+    """工艺文件（与设备绑定，区别于设备维修保养附件）。
+
+    大类(category)：
+    - guide 指导性文件：Recipe 配方、流程图、规格书、作业指导书等（重版本管理）
+    - record 作业记录文件：批次记录、参数记录、检验记录、交接班记录等（重批次/班次/日期）
+    版本管理：同一份文档可有多个版本，共享 group_id；is_latest=True 表示当前最新版本。
+    状态管理：草稿/生效/作废，通过专用状态流转 API 变更，保证流转合法性。
+    """
+    __tablename__ = "process_documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    category = Column(String(16), default="guide", nullable=False, server_default=text("'guide'"), comment="大类: guide指导性/record作业记录")
+    doc_name = Column(String(255), nullable=False, comment="文件名称")
+    doc_type = Column(String(64), nullable=True, comment="类型: 指导性-Recipe/Flowchart/Spec/其他; 作业记录-BatchRecord/ParamLog/InspectionRecord/ShiftHandover/其他")
+    version = Column(String(64), nullable=True, comment="版本号(显示用)")
+    version_seq = Column(Integer, default=1, nullable=False, server_default=text("1"), comment="版本序号(同group内递增)")
+    group_id = Column(String(64), nullable=False, index=True, server_default=text("''"), comment="版本分组ID(同文档多版本共享)")
+    is_latest = Column(Boolean, default=True, nullable=False, server_default=text("1"), comment="是否最新版本")
+    status = Column(String(32), default="草稿", nullable=False, comment="草稿/生效/作废")
+    effective_date = Column(DateTime, nullable=True, comment="生效日期")
+    # 作业记录专属字段（指导性文件可为空）
+    batch_no = Column(String(64), nullable=True, index=True, comment="作业记录-批号")
+    shift = Column(String(16), nullable=True, comment="作业记录-班次: A/B/C")
+    production_date = Column(DateTime, nullable=True, comment="作业记录-生产日期")
+    stored_path = Column(String(512), nullable=False, comment="存储路径")
+    file_size = Column(Integer, nullable=True, comment="字节")
+    file_type = Column(String(64), nullable=True, comment="MIME类型")
+    description = Column(String(500), nullable=True, comment="说明")
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    equipment = relationship("Equipment", back_populates="process_documents")
