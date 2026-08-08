@@ -4,13 +4,28 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     container_name: sems-backend
+    # unless-stopped：人工停止后才不重启；开机/服务重启/崩溃都会自动恢复
     restart: unless-stopped
+    # 启动顺序/健康依赖：数据库就绪才让前端代理通过
     environment:
       - SQLALCHEMY_DATABASE_URI=sqlite:////data/app.db
       - SECRET_KEY=${SECRET_KEY:-please-change-this-secret-key-in-production}
-      - BACKEND_CORS_ORIGINS=["*"]
+      # 生产环境务必通过 .env 设置 FRONTEND_PUBLIC_URL，例如 http://192.168.1.50:8080
+      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS:-["http://localhost:5173","http://localhost:8080"]}
+      - SEMS_OPEN_BROWSER=0
+      - SEMS_LOG_DIR=/var/log/sems
+      - HOST=0.0.0.0
+      - PORT=8000
+    stop_grace_period: 45s          # 与 uvicorn timeout_graceful_shutdown=30 对齐，再加 15s 缓冲
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=5).read().find(b'ok')>=0 else 1)"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 20s            # 首次启动慢（建表+填充演示数据），给 20s 预热
     volumes:
       - sems-data:/data
+      - sems-logs:/var/log/sems    # 日志独立出来，方便宿主机查看/采集
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     networks:
@@ -23,7 +38,15 @@ services:
     container_name: sems-frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy    # 后端健康才启动前端（避免白屏 "can't reach api"）
+    healthcheck:
+      # 前端 Nginx 只要 index.html 可返回 200 就视为 OK
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80 >/dev/null 2>&1 && exit 0 || exit 1"]
+      interval: 45s
+      timeout: 6s
+      retries: 3
+      start_period: 15s
     ports:
       - "${FRONTEND_PORT:-8080}:80"
     networks:
@@ -32,6 +55,8 @@ services:
 volumes:
   sems-data:
     name: sems-data
+  sems-logs:
+    name: sems-logs
 
 networks:
   sems-net:

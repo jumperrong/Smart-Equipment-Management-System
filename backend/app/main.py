@@ -167,6 +167,25 @@ def _seed_ip_whitelist_defaults(db) -> None:
     db.commit()
 
 
+_BOOTSTRAP_DONE = False
+
+
+def _bootstrap_once() -> None:
+    """幂等的应用级启动前预热。run_server/systemd/NSSM 都在启监听前调用它。
+
+    做的事：
+    - 启动安全检查（SECRET_KEY 默认值写 .env、CORS 告警、策略打印）
+    - init_db：建表 + 默认用户 + 字典/权限/设置/演示数据回填 + 重启标记清理
+    - 不启动 APScheduler（scheduler 属于 lifespan，随 uvicorn 启动；重复 start 会被内部去重）
+    """
+    global _BOOTSTRAP_DONE
+    if _BOOTSTRAP_DONE:
+        return
+    _boot_security_checks()
+    init_db()
+    _BOOTSTRAP_DONE = True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _boot_security_checks()
