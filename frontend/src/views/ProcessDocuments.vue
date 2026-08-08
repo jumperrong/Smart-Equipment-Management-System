@@ -10,6 +10,9 @@
           <el-checkbox v-model="showAllVersions" @change="load" size="small">
             显示全部版本
           </el-checkbox>
+          <el-button v-if="canFill && activeCategory === 'record'" type="primary" size="small" @click="openCreateFormDialog()">
+            <el-icon><EditPen /></el-icon> 新建电子表单
+          </el-button>
           <el-button v-if="canWrite" type="success" size="small" @click="openUploadDialog()">
             上传{{ activeCategoryLabel }}
           </el-button>
@@ -142,11 +145,20 @@
         <el-table-column label="上传时间" width="160">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="360" fixed="right">
+        <el-table-column label="操作" width="400" fixed="right">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="onDownload(row)">下载</el-button>
-            <el-button v-if="row.form_record_id" size="small" link type="success" @click="openViewRecord(row)">查看填写</el-button>
-            <el-button v-if="row.form_record_id" size="small" link type="info" @click="onExportRecord(row, 'json')">导出JSON</el-button>
+            <el-button
+              v-if="row.form_record_id && canFill"
+              size="small"
+              link
+              type="success"
+              @click="openFillDialog(row)"
+            >
+              <el-icon><EditPen /></el-icon> 填写
+            </el-button>
+            <el-button v-if="row.form_record_id" size="small" link type="info" @click="openViewRecord(row)">查看填写</el-button>
+            <el-button v-if="row.form_record_id" size="small" link type="warning" @click="onExportRecord(row, 'json')">导出JSON</el-button>
             <el-button v-if="row.form_record_id" size="small" link type="warning" @click="onExportRecord(row, 'csv')">导出CSV</el-button>
             <el-button size="small" link type="info" @click="openVersionDialog(row)">版本</el-button>
             <el-button v-if="canWrite && !row.form_record_id" size="small" link type="success" @click="openNewVersionDialog(row)">新版本</el-button>
@@ -158,6 +170,211 @@
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 选择模板对话框（新建电子表单） -->
+    <el-dialog v-model="tplSelectVisible" title="选择表单模板" width="820px" top="6vh" destroy-on-close>
+      <el-alert type="info" :closable="false" style="margin-bottom:12px">
+        <template #title>
+          选择一个<b>启用中</b>的作业记录模板，基于它创建一条新的电子表单记录。
+        </template>
+      </el-alert>
+      <el-table :data="tplOptions" v-loading="tplLoading" stripe border size="small" @row-dblclick="onTplConfirm">
+        <el-table-column prop="code" label="编码" width="140">
+          <template #default="{ row }">{{ row.code || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="名称" min-width="200">
+          <template #default="{ row }"><b>{{ row.name }}</b></template>
+        </el-table-column>
+        <el-table-column label="适用机台" min-width="140">
+          <template #default="{ row }">
+            <span v-if="eqNameById(row.equipment_id)">{{ eqNameById(row.equipment_id) }}</span>
+            <el-tag v-else size="small" type="success">通用</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="字段数" width="70" align="center">
+          <template #default="{ row }">{{ (row.field_schema || []).length }}</template>
+        </el-table-column>
+        <el-table-column label="参考模板" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.has_ref_file" size="small" type="success" effect="plain">有</el-tag>
+            <span v-else style="color:#c0c4cc">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="110" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" @click="onTplConfirm(row)">选择</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="tplSelectVisible = false">取消</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 填写电子表单对话框（编辑已有结构化记录） -->
+    <el-dialog v-model="fillDialogVisible" :title="fillForm._record ? '填写电子表单' : '基于模板新建电子表单'" width="960px" top="4vh" destroy-on-close>
+      <div v-if="fillForm._template">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div>
+            <el-tag type="success" size="small">模板：{{ fillForm._template.name }}</el-tag>
+            <el-tag v-if="fillForm._template.code" size="small" style="margin-left:4px">{{ fillForm._template.code }}</el-tag>
+            <el-tag v-if="fillForm._record" :type="recordStatusTag(fillForm._record.status)" size="small" style="margin-left:6px">{{ fillForm._record.status }}</el-tag>
+            <el-tag v-else size="small" type="warning" style="margin-left:6px">新建草稿</el-tag>
+          </div>
+          <el-button v-if="fillForm._template.has_ref_file" size="small" type="info" plain @click="onDownloadTplRef(fillForm._template)">
+            <el-icon><Download /></el-icon> 下载参考模板对照
+          </el-button>
+        </div>
+
+        <el-alert
+          v-if="fillForm._record && fillForm._record.status === '已提交'"
+          type="info"
+          :closable="false"
+          style="margin-bottom:10px"
+          show-icon
+        >
+          <template #title>该记录已提交，仍可修改填写值和元数据（修改后状态保留"已提交"）。</template>
+        </el-alert>
+        <el-alert
+          v-else-if="fillForm._record && fillForm._record.status === '已作废'"
+          type="error"
+          :closable="false"
+          style="margin-bottom:10px"
+          show-icon
+        >
+          <template #title>该记录已作废，不允许编辑。</template>
+        </el-alert>
+
+        <el-form :model="fillForm.meta" label-width="100px" style="background:#f8f9fb;padding:14px;border-radius:6px;margin-bottom:12px" :disabled="fillForm._record && fillForm._record.status === '已作废'">
+          <el-row :gutter="16">
+            <el-col :span="8">
+              <el-form-item label="关联机台">
+                <el-select v-model="fillForm.meta.equipment_id" filterable required style="width:100%" @visible-change="onEquipSelectOpen">
+                  <el-option
+                    v-for="e in equipmentOptions"
+                    :key="e.id"
+                    :label="`${e.name}${e.asset_no ? ' (' + e.asset_no + ')' : ''}`"
+                    :value="e.id"
+                  />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="批次号"><el-input v-model="fillForm.meta.batch_no" placeholder="例：B20260807-01" /></el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="班次">
+                <el-select v-model="fillForm.meta.shift" placeholder="选择班次" clearable style="width:100%">
+                  <el-option label="A 班" value="A" /><el-option label="B 班" value="B" /><el-option label="C 班" value="C" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="生产日期">
+                <el-date-picker v-model="fillForm.meta.production_date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="16">
+              <el-form-item label="记录标题">
+                <el-input v-model="fillForm.title" placeholder="留空将自动生成：【模板名】-机台-日期/批次" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="24">
+              <el-form-item label="备注">
+                <el-input v-model="fillForm.remark" type="textarea" :rows="2" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </el-form>
+
+        <el-divider content-position="left"><span style="font-weight:600">填写字段</span></el-divider>
+        <el-form :model="fillForm.values" label-width="140px" size="default" :disabled="fillForm._record && fillForm._record.status === '已作废'">
+          <template v-for="f in fillForm._template.field_schema" :key="f.key">
+            <el-form-item
+              :label="(f.required ? '* ' : '') + f.label + (f.unit ? ` (${f.unit})` : '')"
+              :prop="f.key"
+            >
+              <el-input
+                v-if="f.type === 'text'"
+                v-model="fillForm.values[f.key]"
+                :placeholder="f.placeholder || `请输入${f.label}`"
+                style="width:60%"
+              />
+              <el-input
+                v-else-if="f.type === 'textarea'"
+                v-model="fillForm.values[f.key]"
+                type="textarea"
+                :rows="3"
+                :placeholder="f.placeholder || `请输入${f.label}`"
+                style="width:60%"
+              />
+              <el-input-number
+                v-else-if="f.type === 'number'"
+                v-model="fillForm.values[f.key]"
+                :min="f.min !== null ? f.min : undefined"
+                :max="f.max !== null ? f.max : undefined"
+                controls-position="right"
+                style="width:240px"
+              />
+              <el-select
+                v-else-if="f.type === 'select'"
+                v-model="fillForm.values[f.key]"
+                :placeholder="f.placeholder || `请选择${f.label}`"
+                clearable
+                style="width:300px"
+              >
+                <el-option v-for="o in f.options" :key="o.value" :label="o.label" :value="o.value" />
+              </el-select>
+              <el-radio-group v-else-if="f.type === 'radio'" v-model="fillForm.values[f.key]">
+                <el-radio v-for="o in f.options" :key="o.value" :label="o.value">{{ o.label }}</el-radio>
+              </el-radio-group>
+              <el-date-picker
+                v-else-if="f.type === 'date'"
+                v-model="fillForm.values[f.key]"
+                type="date"
+                value-format="YYYY-MM-DD"
+                :placeholder="f.placeholder || `请选择${f.label}`"
+                style="width:240px"
+              />
+              <el-date-picker
+                v-else-if="f.type === 'datetime'"
+                v-model="fillForm.values[f.key]"
+                type="datetime"
+                value-format="YYYY-MM-DD HH:mm:ss"
+                :placeholder="f.placeholder || `请选择${f.label}`"
+                style="width:260px"
+              />
+              <el-time-picker
+                v-else-if="f.type === 'time'"
+                v-model="fillForm.values[f.key]"
+                value-format="HH:mm:ss"
+                :placeholder="f.placeholder || `请选择${f.label}`"
+                style="width:220px"
+              />
+              <el-switch v-else-if="f.type === 'boolean'" v-model="fillForm.values[f.key]" active-text="是" inactive-text="否" />
+              <span v-else style="color:#909399">未知字段类型：{{ f.type }}</span>
+            </el-form-item>
+          </template>
+        </el-form>
+      </div>
+
+      <template #footer>
+        <el-button @click="fillDialogVisible = false">关闭</el-button>
+        <template v-if="!fillForm._record || fillForm._record.status !== '已作废'">
+          <el-button :loading="fillSubmitting" @click="saveFill(false)">
+            {{ fillForm._record ? (fillForm._record.status === '草稿' ? '保存草稿' : '保存修改') : '保存草稿' }}
+          </el-button>
+          <el-button
+            :loading="fillSubmitting"
+            type="primary"
+            :disabled="fillForm._record && fillForm._record.status !== '草稿'"
+            @click="saveFill(true)"
+          >
+            {{ fillForm._record ? '提交（仅草稿可执行）' : '保存并提交' }}
+          </el-button>
+        </template>
+      </template>
+    </el-dialog>
 
     <!-- 查看结构化填写值 对话框 -->
     <el-dialog v-model="viewRecordVisible" title="结构化填写详情" width="760px" top="6vh" destroy-on-close>
@@ -498,7 +715,7 @@
 <script setup>
 import { reactive, ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download } from '@element-plus/icons-vue'
+import { EditPen, Download } from '@element-plus/icons-vue'
 import {
   listProcessDocuments,
   uploadProcessDocument,
@@ -513,14 +730,21 @@ import {
 import { listEquipments } from '@/api/equipment'
 import {
   getFormRecord,
+  getFormTemplate,
+  updateFormRecord,
+  submitFormRecord,
+  createFormRecord,
   exportFormRecord,
+  downloadTemplateRefFile,
 } from '@/api/form_template'
+import { listFormTemplates } from '@/api/form_template'
 import { useUserStore } from '@/stores'
 import { formatTime } from '@/utils'
 
 const userStore = useUserStore()
 const canWrite = computed(() => userStore.can('process_doc.write'))
 const canDelete = computed(() => userStore.can('process_doc.delete'))
+const canFill = computed(() => userStore.can('form_record.fill'))
 
 // 文件类型选项（按大类区分）
 const guideDocTypes = ['Recipe', 'Flowchart', 'Spec', '其他']
@@ -577,6 +801,13 @@ async function load() {
 function resetQuery() {
   Object.assign(query, { equipment_id: null, doc_type: '', status: '', batch_no: '', keyword: '' })
   load()
+}
+
+// 设备名查找
+function eqNameById(id) {
+  if (!id) return null
+  const eq = equipmentOptions.value.find((e) => e.id === id)
+  return eq ? `${eq.name}${eq.asset_no ? ' (' + eq.asset_no + ')' : ''}` : null
 }
 
 // ---- 上传 ----
@@ -861,6 +1092,165 @@ function formatScalar(v) {
 const recordStatusTag = (s) => ({
   草稿: 'info', 已提交: 'success', 已作废: 'danger',
 }[s] || 'info')
+
+// ---------- 新建电子表单（选择模板 → 填写 → 创建记录） ----------
+const tplSelectVisible = ref(false)
+const tplOptions = ref([])
+const tplLoading = ref(false)
+
+async function openCreateFormDialog() {
+  tplSelectVisible.value = true
+  tplLoading.value = true
+  try {
+    if (!equipmentOptions.value.length) await onEquipSelectOpen(true)
+    const rows = await listFormTemplates({ category: 'record', is_active: true })
+    tplOptions.value = (rows || []).map((r) => { r.field_schema = r.field_schema || []; return r })
+  } catch (e) {
+    ElMessage.error('加载模板列表失败')
+  } finally {
+    tplLoading.value = false
+  }
+}
+
+function onTplConfirm(tpl) {
+  tplSelectVisible.value = false
+  // 用选中模板初始化填写表单（新建模式：_record = null）
+  fillForm._record = null
+  fillForm._template = tpl
+  fillForm.title = ''
+  fillForm.remark = ''
+  fillForm.meta = {
+    equipment_id: tpl.equipment_id || null,
+    batch_no: '',
+    shift: '',
+    production_date: '',
+  }
+  fillForm.values = {}
+  ;(tpl.field_schema || []).forEach((f) => {
+    if (f.default_value !== null && f.default_value !== undefined) {
+      fillForm.values[f.key] = f.default_value
+    } else if (f.type === 'boolean') {
+      fillForm.values[f.key] = false
+    } else {
+      fillForm.values[f.key] = null
+    }
+  })
+  fillDialogVisible.value = true
+}
+
+// ---------- 填写电子表单（编辑已有结构化记录 / 新建记录） ----------
+const fillDialogVisible = ref(false)
+const fillSubmitting = ref(false)
+const fillForm = reactive({
+  _record: null,
+  _template: null,
+  title: '',
+  remark: '',
+  meta: { equipment_id: null, batch_no: '', shift: '', production_date: '' },
+  values: {},
+})
+
+async function openFillDialog(row) {
+  if (!row.form_record_id) return
+  // 预加载设备列表
+  if (!equipmentOptions.value.length) await onEquipSelectOpen(true)
+  fillDialogVisible.value = true
+  fillForm._record = null
+  fillForm._template = null
+  try {
+    const rec = await getFormRecord(row.form_record_id)
+    const tpl = await getFormTemplate(rec.template_id)
+    fillForm._record = rec
+    fillForm._template = tpl
+    fillForm.title = rec.title || ''
+    fillForm.remark = rec.remark || ''
+    fillForm.meta = {
+      equipment_id: rec.equipment_id || null,
+      batch_no: rec.batch_no || '',
+      shift: rec.shift || '',
+      production_date: rec.production_date ? formatTime(rec.production_date, 'YYYY-MM-DD') : '',
+    }
+    // 初始化字段值：先按 schema 设默认值，再用已有 values 覆盖
+    fillForm.values = {}
+    ;(tpl.field_schema || []).forEach((f) => {
+      if (f.default_value !== null && f.default_value !== undefined) {
+        fillForm.values[f.key] = f.default_value
+      } else if (f.type === 'boolean') {
+        fillForm.values[f.key] = false
+      } else {
+        fillForm.values[f.key] = null
+      }
+    })
+    ;(rec.values || []).forEach((v) => {
+      fillForm.values[v.field_key] = v.field_value
+    })
+  } catch (e) {
+    ElMessage.error(e?.message || '加载记录失败')
+    fillDialogVisible.value = false
+  }
+}
+
+function onDownloadTplRef(tpl) {
+  downloadTemplateRefFile(tpl.id, tpl.ref_original_name).catch((e) => {
+    ElMessage.error(e?.message || '下载参考模板失败')
+  })
+}
+
+async function saveFill(doSubmit) {
+  if (!fillForm._template) return
+  if (!fillForm.meta.equipment_id) {
+    ElMessage.error('请先填写关联机台')
+    return
+  }
+  const valuesArr = Object.keys(fillForm.values)
+    .filter((k) => fillForm.values[k] !== undefined && fillForm.values[k] !== null && fillForm.values[k] !== '')
+    .map((k) => ({ field_key: k, field_value: fillForm.values[k] }))
+  fillSubmitting.value = true
+  try {
+    if (fillForm._record) {
+      // 编辑已有记录
+      const recordId = fillForm._record.id
+      const payload = {
+        equipment_id: fillForm.meta.equipment_id,
+        title: fillForm.title || null,
+        batch_no: fillForm.meta.batch_no || null,
+        shift: fillForm.meta.shift || null,
+        production_date: fillForm.meta.production_date || null,
+        remark: fillForm.remark || null,
+        values: valuesArr,
+      }
+      let rec = await updateFormRecord(recordId, payload)
+      fillForm._record = rec
+      if (doSubmit && rec.status === '草稿') {
+        rec = await submitFormRecord(recordId)
+        fillForm._record = rec
+      }
+      if (doSubmit) ElMessage.success(`已提交：#${rec.id} ${rec.title}`)
+      else ElMessage.success(`已保存：#${rec.id} ${rec.title}`)
+    } else {
+      // 新建记录
+      const payload = {
+        template_id: fillForm._template.id,
+        equipment_id: fillForm.meta.equipment_id,
+        title: fillForm.title || null,
+        batch_no: fillForm.meta.batch_no || null,
+        shift: fillForm.meta.shift || null,
+        production_date: fillForm.meta.production_date || null,
+        remark: fillForm.remark || null,
+        values: valuesArr,
+        auto_submit: !!doSubmit,
+        link_process_doc: true,
+      }
+      const rec = await createFormRecord(payload)
+      if (doSubmit) ElMessage.success(`已提交：#${rec.id} ${rec.title}`)
+      else ElMessage.success(`已保存草稿：#${rec.id} ${rec.title}`)
+    }
+    fillDialogVisible.value = false
+    load()
+  } finally {
+    fillSubmitting.value = false
+  }
+}
 
 // ---------- 查看结构化记录 ----------
 const viewRecordVisible = ref(false)

@@ -8,6 +8,8 @@ Semiconductor Equipment Management System
 
 ## 版本 Highlights（最近一次主要更新）
 
+- **表单模板与结构化记录**：管理员定义模板（字段类型/必填/选项/单位/范围），操作员选模板动态生成电子表单并填写，数据结构化存储可导出 JSON/CSV，替代传统 PDF 上传模式。
+- **作业记录新建电子表单**：在工艺文件→作业记录页面直接「新建电子表单」→选模板→填写→保存草稿/提交，自动归档为工艺文件条目；已有记录可点击「填写」按钮继续编辑。
 - **设备 DOWN 触发工单**：操作员 / 设备 / 工艺人员都可在台账右上角切换设备状态到 `DOWN`，系统自动创建 `REPAIR` 类型工单（含故障现象 + 紧急度），自动派发。
 - **工单持续时长可见**：列表 & 详情页显示工单从创建到关闭（或当前）的持续时长，便于跟踪。
 - **关键词检索**：工单支持标题/描述/现象关键词检索（例：搜「漏真空」可命中所有包含该词的工单）。
@@ -26,12 +28,13 @@ Semiconductor Equipment Management System
 | 工单管理 | 工单创建与跟踪、**紧急度标签、持续时长、关键词检索**；REPAIR 工单可由 DOWN 状态自动触发 |
 | PM 维护计划 | 周期性 PM 计划（周/双周/月/季度）、执行记录 |
 | 备件管理 | 备件库存、出入库流水、设备易损件清单 |
-| 工艺文件 | 文档版本管理 |
+| 工艺文件 | 指导性文件版本管理 + **作业记录结构化表单（模板定义→动态填写→归档→导出 JSON/CSV）** |
 | OEE 分析 | 设备综合效率统计 |
 | 品管工具 | 8D / FMEA |
 | 环境核查 | 环境参数日志 |
 | 人员管理 | 资质、培训、技能矩阵 |
 | 资产管理 | 资产盘点、调拨报废 |
+| **表单模板管理** | **管理员定义表单模板（字段/类型/选项/单位/范围）→ 上传参考文件 → 生成结构化记录（仅管理员）** |
 | 系统配置 | 用户管理、角色权限、**IP 白名单**、系统设置、**一键备份/恢复/加密+异地副本**、定时备份计划 |
 
 ---
@@ -678,6 +681,69 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 | 只有普通用户，无 sudo | **B. watchdog_user.sh** | cron 可用 | ✅ (@reboot) | ✅ | ✅ (每分钟 tick) |
 | Windows Server / Win10 工控机 | **C. NSSM + 任务计划** | 装 nssm.exe | ✅ | ✅ | ✅ (每 2 分钟) |
 | 习惯 Docker 部署 | **D. Compose** | docker + compose | ✅ | ✅ | ✅ (compose healthcheck) |
+
+---
+
+## 表单模板与结构化记录
+
+传统模式下，作业记录（批次记录、参数记录、检验记录、交接班记录等）通过上传 PDF/Excel 附件归档。本功能允许管理员**定义表单模板**（字段、类型、选项、单位、范围），操作员**选模板动态生成电子表单并填写**，数据结构化存储，支持导出 JSON/CSV，便于后续检索和分析。
+
+### 工作流程
+
+```
+① 管理员定义模板                    ② 操作员填写                      ③ 归档与导出
+┌─────────────────────┐     ┌─────────────────────────┐     ┌───────────────────┐
+│ 表单模板管理页面      │     │ 工艺文件→作业记录页面     │     │ 自动归档为工艺文件   │
+│ - 创建模板            │ ──→ │ - 新建电子表单→选模板    │ ──→ │ - 查看填写详情      │
+│ - 定义字段（9种类型） │     │ - 动态渲染表单            │     │ - 导出 JSON / CSV   │
+│ - 上传参考文件        │     │ - 保存草稿 / 提交         │     │ - 可继续编辑修改     │
+│ - 启用 / 停用         │     │ - 已有记录可点击「填写」   │     │                   │
+└─────────────────────┘     └─────────────────────────┘     └───────────────────┘
+```
+
+### 支持的字段类型
+
+| 类型 | 说明 | 示例 |
+|------|------|------|
+| `text` | 单行文本 | 操作员姓名 |
+| `textarea` | 多行文本 | 异常描述 |
+| `number` | 数字（可设 min/max/单位） | 腔体温度 (℃) |
+| `select` | 下拉选择 | 班次 = A/B/C |
+| `radio` | 单选 | 合格 / 不合格 |
+| `date` | 日期 | 生产日期 |
+| `datetime` | 日期时间 | 开机时间 |
+| `time` | 时间 | 交接时间 |
+| `boolean` | 是/否开关 | 是否完成清洁 |
+
+### 权限说明
+
+| 功能 | 权限 Key | 默认允许角色 |
+|------|----------|-------------|
+| 模板管理（创建/编辑/删除/停用） | `form_template.manage` | admin, process_engineer |
+| 记录填写（新建/编辑/提交） | `form_record.fill` | admin, engineer, process_engineer, operator |
+| 记录删除 | `form_record.delete` | admin |
+
+> **注意**：表单模板管理页面（创建/编辑模板）仅管理员可访问。工艺文件页面中的「新建电子表单」和「填写」按钮对所有有 `form_record.fill` 权限的角色可见。
+
+### API 端点
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/form-templates` | 模板列表（支持分类/机台/状态过滤） |
+| POST | `/api/v1/form-templates` | 创建模板 |
+| PUT | `/api/v1/form-templates/{id}` | 更新模板 |
+| DELETE | `/api/v1/form-templates/{id}` | 删除模板 |
+| POST | `/api/v1/form-templates/{id}/ref-file` | 上传参考模板文件 |
+| GET | `/api/v1/form-templates/{id}/ref-file` | 下载参考模板文件 |
+| GET | `/api/v1/form-records` | 记录列表 |
+| POST | `/api/v1/form-records` | 创建记录（含 auto_submit + link_process_doc） |
+| GET | `/api/v1/form-records/{id}` | 记录详情（含字段值） |
+| PUT | `/api/v1/form-records/{id}` | 更新记录（元数据 + 字段值） |
+| PATCH | `/api/v1/form-records/{id}/submit` | 提交草稿 |
+| PATCH | `/api/v1/form-records/{id}/void` | 作废记录 |
+| GET | `/api/v1/form-records/{id}/export/{format}` | 导出 JSON / CSV |
+
+相关代码：[models/__init__.py](file:///workspace/backend/app/models/__init__.py)（FormTemplate / FormRecord / FormRecordValue）· [api/v1/form_templates.py](file:///workspace/backend/app/api/v1/form_templates.py) · [api/v1/form_records.py](file:///workspace/backend/app/api/v1/form_records.py) · [views/FormTemplates.vue](file:///workspace/frontend/src/views/FormTemplates.vue) · [views/ProcessDocuments.vue](file:///workspace/frontend/src/views/ProcessDocuments.vue)
 
 ---
 
