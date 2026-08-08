@@ -34,26 +34,38 @@ MAX_FAIL=$MAX_FAIL
 EOF
   chmod 600 "${HOME}/.sems_watchdog.conf"
 
-  # 写两份：开机自启 + 每分钟 tick
-  (
-    crontab -l 2>/dev/null | grep -vE "(^[^#]*sems_watchdog\.sh)" || true
-    echo ""
-    echo "@reboot /bin/bash $SCRIPT tick --from-cron >> $LOG_DIR/watchdog.log 2>&1"
-    echo "* * * * * /bin/bash $SCRIPT tick --from-cron >> $LOG_DIR/watchdog.log 2>&1"
-  ) | crontab -
+  # 写两份：开机自启 + 每分钟 tick（需 cron 可用，否则只生成配置，tick 由外部调度）
+  if command -v crontab >/dev/null 2>&1; then
+    (
+      crontab -l 2>/dev/null | grep -vE "(^[^#]*sems_watchdog\.sh)" || true
+      echo ""
+      echo "@reboot /bin/bash $SCRIPT tick --from-cron >> $LOG_DIR/watchdog.log 2>&1"
+      echo "* * * * * /bin/bash $SCRIPT tick --from-cron >> $LOG_DIR/watchdog.log 2>&1"
+    ) | crontab -
 
-  echo "[OK] 看门狗已写入当前用户 crontab："
-  crontab -l | grep sems_watchdog
+    echo "[OK] 看门狗已写入当前用户 crontab："
+    crontab -l 2>/dev/null | grep sems_watchdog || true
+  else
+    echo "[WARN] 未检测到 crontab 命令（本系统未装 cron）。看门狗配置已写入，但开机/每分钟自动调度需要你自行安排："
+    echo "       开机启动:  ~/.bashrc  或 桌面环境『启动应用』中加入: bash $SCRIPT tick --from-cron >> $LOG_DIR/watchdog.log 2>&1"
+    echo "       定时:      任何能每 1 分钟触发一次 bash 的机制（systemd --user timer / 其他调度器）调用: bash $SCRIPT tick"
+  fi
+
   echo ""
   echo "配置文件：${HOME}/.sems_watchdog.conf"
   echo "日志：$LOG_DIR/watchdog.log"
-  echo "接下来 1 分钟内 watchdog 会第一次 tick，自动拉起 run_server。"
+  echo "tick 逻辑独立可用，不依赖 cron：手动运行『bash $(basename "$SCRIPT") tick』也能立即检查+自动拉起。"
 }
 
 uninstall() {
-  ( crontab -l 2>/dev/null || true ) | grep -vE "(^[^#]*sems_watchdog\.sh)" | crontab -
+  if command -v crontab >/dev/null 2>&1; then
+    ( crontab -l 2>/dev/null || true ) | grep -vE "(^[^#]*sems_watchdog\.sh)" | crontab -
+    echo "[OK] 看门狗已从当前用户 crontab 移除。"
+  else
+    echo "[INFO] 系统未装 crontab，跳过 crontab 行清理。"
+  fi
   rm -f "${HOME}/.sems_watchdog.conf"
-  echo "[OK] 看门狗已从当前用户 crontab 移除，配置文件已删除。"
+  echo "[OK] 配置文件已删除（${HOME}/.sems_watchdog.conf）。"
 }
 
 tick() {
