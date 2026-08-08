@@ -504,6 +504,183 @@ Linux NFS 挂载：
 
 ---
 
+## 🔌 服务守护与自启动（健壮性 / 开机自启 / 崩溃自重启）
+
+SEMS 服务一旦跑在产线（工厂/实验室局域网服务器），最怕的是：
+- 机器重启后服务没起来 → 车间工人登录不上；
+- 后端因为未捕获异常/OOM/系统杀进程 → 服务挂了没人知道；
+- 端口被旧的残留进程占用 → 新进程起不来、错误日志晦涩；
+- SQLite WAL 异常残留 → 恢复慢/数据文件损坏概率上升。
+
+本系统按"多路径兜底"思想，给出 **4 套部署 + 守护方案**（Linux/Windows/Docker/受限环境）。你按实际操作系统任选一套即可；同时主启动入口 `run_server.py` 也做了**入口级加固**。
+
+### 一、入口级加固（所有方案都自动生效，无需配置）
+
+由 [run_server.py](file:///workspace/backend/run_server.py) + [main.py](file:///workspace/backend/app/main.py) 共同提供：
+
+| 能力 | 说明 |
+|------|------|
+| **端口占用友好提示** | `sys.exit(2)` 前输出「3 条解决选项 + ss/netstat 定位占用 PID」，**不会再抛一大段 OSError 堆栈**；systemd/NSSM 看到 exit 2 会标记为"配置错误"避免无限重启 |
+| **SQLite WAL checkpoint 钩子** | 启动前 `PRAGMA journal_mode=WAL; synchronous=NORMAL; optimize; wal_checkpoint(TRUNCATE);`；停服前再 checkpoint 一次；显著降低「-wal 几 MB 没 checkpoint、下次启动恢复慢/损坏」概率 |
+| **应用级预热 _bootstrap_once()** | 监听端口前就跑：建表 + 默认用户 + 默认设置 + 演示数据回填 + 重启标记清理 + 启动安全检查。端口打开了就说明 DB 一定就绪 |
+| **uvicorn 优雅退出** | `timeout_keep_alive=75`（对齐 Nginx）、`timeout_graceful_shutdown=30`（给在途请求 30s 收尾）。配合 systemd `TimeoutStopSec=60` / docker `stop_grace_period: 45s` |
+| **日志双写** | 控制台 + journald / NSSM 文件 + 内部 `TimedRotatingFileHandler` 按天滚动：`sems.log`（14 天）、`sems.error.log`（30 天 WARNING+）。**断电后仍能定位最后几分钟在干嘛** |
+| **启动横幅自检入口** | 打印 `/health`、`/docs`、`日志目录`、`停止命令`，运维扫一眼就能跑自检 |
+
+### 二、方案 A — Linux（最推荐，systemd + 看门狗 + 健康检查 crontab）
+
+**核心文件**：
+- Unit 模板：[sems.service](file:///workspace/backend/scripts/sems.service)
+- 安装脚本：[install_service.sh](file:///workspace/backend/scripts/install_service.sh)
+- 卸载脚本：[uninstall_service.sh](file:///workspace/backend/scripts/uninstall_service.sh)
+- 健康检查脚本：[sems_healthcheck.sh](file:///workspace/backend/scripts/sems_healthcheck.sh)（连续失败 3 次自动 `systemctl restart sems`）
+
+一键安装（推荐给 root 管理员在服务器上执行，不需要动代码）：
+```bash
+cd /opt/sems/backend/scripts
+
+# ① 标准：服务名 sems，端口 8000，系统用户 sems，并追加 root crontab 健康检查
+sudo bash ./install_service.sh \
+  --backend-dir=/opt/sems/backend \
+  --user=sems --group=sems \
+  --port=8000 \
+  --with-healthcheck-cron
+
+# ② 如果不能给 root：用户级 systemd（同样开机自启，前提是管理员启用 linger）
+bash ./install_service.sh --user-level --backend-dir=$HOME/sems/backend --port=8000
+sudo loginctl enable-linger $USER   # 管理员执行一次；否则退出登录后服务也停
+```
+
+**得到的保障（开箱即用）**：
+- ✅ `WantedBy=multi-user.target`：**开机自动启动**
+- ✅ `Restart=on-failure` + `RestartPreventExitStatus=2`：崩了 / OOM / kill -9 自动重启；端口占用/配置错不再"无限重启刷日志"
+- ✅ `StartLimitBurst=5 / 120s`：连续 2 分钟内启动失败 5 次 → systemd 标记 failed，人工介入（防雪崩）
+- ✅ `WatchdogSec=5min`：systemd 原生看门狗兜底
+- ✅ 沙箱硬ening：`ProtectSystem=strict + ReadWritePaths` 只允许写 `data/.env/scripts/`、`PrivateTmp=true`、`NoNewPrivileges=true`、`SystemCallArchitectures=native`、`MemoryMax=2G`、`TasksMax=256`
+- ✅ root crontab 每 2 分钟 curl /health；连续 3 次 NG 就 `systemctl restart sems`（**极端假死（端口在但不响应）也能兜住**）
+
+常用运维命令：
+```bash
+sudo systemctl status sems -l
+sudo systemctl restart sems
+sudo journalctl -u sems -f --since today              # 实时看 systemd 日志
+sudo tail -f /var/log/sems/sems.log /var/log/sems/sems.error.log  # 看应用轮转日志
+curl -fsS http://127.0.0.1:8000/health                 # 健康检查
+tail -f /var/log/sems/healthcheck.log                  # 健康检查独立日志
+```
+
+卸载：
+```bash
+sudo bash /opt/sems/backend/scripts/uninstall_service.sh            # 停+删服务，保留日志
+sudo bash /opt/sems/backend/scripts/uninstall_service.sh --purge-data   # 连日志/健康计数一起删
+```
+
+### 三、方案 B — 无 root / 受限 Linux（不能写 systemd、没有 sudo）
+
+用看门狗 + cron `@reboot` 做**纯用户态兜底**，不用提权、不用写系统目录：
+
+```bash
+bash ./backend/scripts/watchdog_user.sh install --backend-dir=/home/john/sems/backend --port=8000
+```
+
+它会：
+1. 写 `~/.sems_watchdog.conf` 保存配置（mode 600）；
+2. 往当前用户 crontab 加 2 条：
+   - `@reboot ... watchdog_user.sh tick ...`  开机后马上拉起一次
+   - `* * * * * ... watchdog_user.sh tick ...` 每分钟跑 health 检查
+3. tick 逻辑：/health ok → 清零；连续失败 3 次 → kill 旧 PID + 必要时 `fuser -k 8000/tcp` → `nohup setsid python run_server.py ...` 拉起新进程，写 pidfile 给下一轮识别。
+
+卸载：
+```bash
+bash ./backend/scripts/watchdog_user.sh uninstall
+```
+
+> 适合场景：工厂小服务器是共享账号、只能用普通用户、不能装 systemd unit。稳健性略逊于 A，但比"屏幕里 tmux 挂着"强太多（tmux 杀不掉用户误关终端）。
+
+### 四、方案 C — Windows（工厂常见，NSSM + 任务计划程序健康检查）
+
+**核心文件**：
+- 安装脚本：[install_service.bat](file:///workspace/backend/scripts/install_service.bat)
+- 健康检查脚本：[sems_healthcheck.bat](file:///workspace/backend/scripts/sems_healthcheck.bat)
+- 主入口仍然是 [run_server.py](file:///workspace/backend/run_server.py)
+
+**先装 NSSM（Non-Sucking Service Manager）**：https://nssm.cc/download ，下载 64 位 `nssm.exe` 放到：
+```
+D:\sems\backend\scripts\nssm.exe
+```
+（或加入 PATH；本脚本会自动探测 `%~dp0nssm.exe` 再回退 PATH 找）
+
+**然后管理员身份打开 cmd，执行**：
+```bat
+cd /d D:\sems\backend\scripts
+install_service.bat /PORT 8000 /SERVICE sems
+```
+
+**得到的保障（开箱即用）**：
+- ✅ **开机自启（延迟启动）**：`sc config sems start= delayed-auto`
+- ✅ **崩溃自重启**：
+  - NSSM 层：`AppExit Default Restart` + `AppRestartDelay 0 + AppThrottle 1500ms`（连续崩不刷 CPU）
+  - SCM 层：`sc failure` 三次失败全 restart / 3s / 失败计数 24h 重置
+- ✅ **健康检查计划任务**：每 2 分钟 `PowerShell Invoke-WebRequest /health`，连续失败 3 次 → `net stop && net start` 兜底
+- ✅ 应用 stderr/stdout 通过 NSSM 也会写 `data/logs/nssm.out.log`，10MB 自动轮转
+
+**Windows 运维命令**：
+```bat
+net start sems
+net stop  sems
+nssm edit sems          :: 图形化改参数、看 stderr/stdout 路径
+schtasks /Run /TN "SEMS健康检查_sems"
+schtasks /Query /TN "SEMS健康检查_sems" /V
+curl -fsS http://127.0.0.1:8000/health
+```
+
+> 如工厂策略禁止装 NSSM，也可用 `sc.exe` + PyInstaller 打包的 `SEMS-Server.exe`（`run_server.py` 是官方 PyInstaller 入口），不过重启策略、stdout 重定向都要自己写，复杂度高，优先 NSSM。
+
+### 五、方案 D — Docker Compose（容器化部署最快）
+
+`docker-compose.yml` 已经按健壮性重配（[docker-compose.yml](file:///workspace/docker-compose.yml)）：
+
+| 字段 | 作用 |
+|------|------|
+| `restart: unless-stopped` | 崩溃/重启 Docker/宿主机都启动；只有 `docker compose down` 才停 |
+| `depends_on.condition: service_healthy` | **前端必须等后端 `/health` 通过才起来**（避免白屏 "can't reach api"） |
+| backend `healthcheck` | 每 30s curl 容器内 8000/health，失败 3 次标记 unhealthy，compose 重启策略才生效 |
+| frontend `healthcheck` | 每 45s 看 Nginx 能不能回首页 |
+| `stop_grace_period: 45s` | 对齐 uvicorn `timeout_graceful_shutdown=30`，留 15s 缓冲 |
+| `sems-logs` 独立卷 | `/var/log/sems` 单独卷，方便 Filebeat/ELK 采集，即使容器重建日志也保留 |
+| `BACKEND_CORS_ORIGINS` | 默认不开放 `*`，改为仅 localhost |
+
+常用：
+```bash
+docker compose up -d --build          # 首次构建启动
+docker compose ps                     # 查 healthy 状态
+docker compose logs -f backend        # 只看后端容器日志
+docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近 5 次健康检查详情
+```
+
+### 六、上线前自检验收清单（每一条都做到，基本不会意外停机）
+
+| # | 验证项 | 命令 / 方法 | 期望 |
+|---|--------|-------------|------|
+| 1 | 守护方案已启用 | `systemctl is-enabled sems` / `nssm get sems Start` / `docker compose ps` | `enabled` / `AUTO` / 显示 running + healthy |
+| 2 | 端口占用提示正确 | 占住 8000 再启后端 | 给出"占用 PID + 3 条出路"并 `echo $? = 2` |
+| 3 | 崩溃自重启有效 | 手动 `kill -9 <uvicorn-PID>`（Linux） / 任务管理器结束 python.exe（Win） | 10s 内 process 再次出现，PID 不同，`/health = ok` |
+| 4 | 优雅停服有效 | 传一个长请求，再 `systemctl restart sems` | 长请求未被截断，日志出现 `[SEMS] 退出前 SQLite checkpoint 完成。` |
+| 5 | 开机自启有效 | `sudo reboot`（Linux） / 服务器重启（Win） | 重启完无需登录，`curl /health` 本地能通 |
+| 6 | 日志双写有效 | 发请求 / 登登录几次，`journalctl -u sems` 与 `tail /var/log/sems/sems.log` 都有记录 | 两边都看得到同样请求 |
+| 7 | 健康检查兜底 | 手动把 8000 iptables drop 掉（仅测试）或改健康端点临时返回非 ok | 3 次失败后 systemctl/服务被重启 |
+
+### 七、4 套方案选型速查表
+
+| 你的部署场景 | 推荐方案 | 额外需要 | 自启 | 崩溃重启 | 健康检查兜底 |
+|-------------|----------|---------|-----|---------|---------|
+| 工厂 Linux 服务器，有 root | **A. systemd** | N/A | ✅ | ✅ | ✅ (cron + 重启) |
+| 只有普通用户，无 sudo | **B. watchdog_user.sh** | cron 可用 | ✅ (@reboot) | ✅ | ✅ (每分钟 tick) |
+| Windows Server / Win10 工控机 | **C. NSSM + 任务计划** | 装 nssm.exe | ✅ | ✅ | ✅ (每 2 分钟) |
+| 习惯 Docker 部署 | **D. Compose** | docker + compose | ✅ | ✅ | ✅ (compose healthcheck) |
+
+---
+
 ## 常见问题
 
 | 问题 | 解决方案 |
