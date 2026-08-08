@@ -42,6 +42,7 @@
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="profile">个人信息</el-dropdown-item>
+                <el-dropdown-item command="change-password">修改密码</el-dropdown-item>
                 <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -86,6 +87,10 @@ const roleLabel = (r) => ({ admin: '管理员', engineer: '工程师', process_e
 const roleTagType = (r) => ({ admin: 'danger', engineer: 'primary', process_engineer: 'warning', operator: 'success', viewer: 'info' }[r] || 'info')
 
 function onCommand(cmd) {
+  if (cmd === 'change-password') {
+    routerObj.push({ name: 'ChangePassword' })
+    return
+  }
   if (cmd === 'logout') {
     ElMessageBox.confirm('确定要退出登录吗？', '提示', { type: 'warning' })
       .then(() => {

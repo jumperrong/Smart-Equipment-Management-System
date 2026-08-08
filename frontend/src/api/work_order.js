@@ -28,16 +28,6 @@ export const addSpareUsage = (id, data) =>
 export const listSpareUsages = (id) =>
   request({ url: `${base}/${id}/spare-usages`, method: 'get' })
 
-// 报修单
-export const listReports = (params = {}) =>
-  request({ url: `${base}/reports`, method: 'get', params })
-
-export const createReport = (data) =>
-  request({ url: `${base}/reports`, method: 'post', data })
-
-export const convertReport = (id) =>
-  request({ url: `${base}/reports/${id}/convert`, method: 'post' })
-
 // PM 计划
 export const listPMPlans = (params = {}) =>
   request({ url: `${base}/pm-plans`, method: 'get', params })

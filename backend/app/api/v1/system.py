@@ -360,13 +360,66 @@ def list_backups(
     dependencies=[Depends(require_roles(UserRole.ADMIN))],
 )
 def create_backup(payload: BackupCreateIn):
-    """创建系统完整备份。"""
+    """创建系统完整备份（基础zip版）。"""
     return backup_service.create_backup(
         sub_dir=payload.sub_dir or None,
         note=payload.note or None,
         include_uploads=payload.include_uploads,
         include_env=payload.include_env,
     )
+
+
+class BackupCreateFullIn(BaseModel):
+    sub_dir: Optional[str] = ""
+    note: Optional[str] = ""
+    include_uploads: bool = True
+    include_env: bool = True
+    encrypt: bool = False
+    copy_to_secondary: bool = False
+    run_smoke_check: bool = True
+    secondary_keep_count: int = Field(14, ge=1, description="异地目录保留份数")
+
+
+@router.post(
+    "/backup/create-full",
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+def create_backup_full(payload: BackupCreateFullIn):
+    """一键备份：zip → 加密 → 异地副本 → 还原烟雾测试。"""
+    return backup_service.create_backup_full(
+        sub_dir=payload.sub_dir or None,
+        note=payload.note or None,
+        include_uploads=payload.include_uploads,
+        include_env=payload.include_env,
+        encrypt=payload.encrypt,
+        copy_to_secondary=payload.copy_to_secondary,
+        run_smoke_check=payload.run_smoke_check,
+        secondary_keep_count=payload.secondary_keep_count,
+    )
+
+
+@router.get(
+    "/backup/security-status",
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+def backup_security_status():
+    """查看备份加密 / 异地副本是否配置。"""
+    enc_status = backup_service.is_backup_encryption_available()
+    try:
+        sec_dir = backup_service.resolve_secondary_root()
+        secondary = {"configured": True, "dir": str(sec_dir)}
+    except Exception as e:
+        secondary = {"configured": False, "error": str(e)}
+    return {"encryption": enc_status, "secondary": secondary}
+
+
+@router.post(
+    "/backup/health-check",
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+def backup_health_check(payload: BackupDeleteIn):
+    """对某备份文件做可还原性烟雾测试。"""
+    return backup_service.health_check_backup(payload.file_name, payload.sub_dir or None)
 
 
 @router.delete(
@@ -425,9 +478,13 @@ class BackupScheduleIn(BaseModel):
     enabled: bool = Field(False, description="是否启用定时备份")
     cron: str = Field("0 2 * * *", description="cron 表达式（5字段：分 时 日 月 周）")
     sub_dir: str = Field("scheduled", description="备份子目录")
-    keep_count: int = Field(30, ge=0, description="保留备份数量（0=不限制）")
+    keep_count: int = Field(30, ge=0, description="本地保留备份数量（0=不限制）")
+    secondary_keep_count: int = Field(14, ge=1, description="异地目录保留份数")
     include_uploads: bool = True
     include_env: bool = True
+    encrypt: bool = Field(False, description="备份后生成 .aes256 加密副本（需安装 cryptography）")
+    copy_to_secondary: bool = Field(False, description="把备份复制到 BACKUP_SECONDARY_DIR 第二目录")
+    run_smoke_check: bool = Field(True, description="备份后做一次还原烟雾测试（验证可恢复性）")
 
 
 # ---------- 定时备份 API ----------
@@ -454,6 +511,10 @@ def update_backup_schedule(payload: BackupScheduleIn):
         keep_count=payload.keep_count,
         include_uploads=payload.include_uploads,
         include_env=payload.include_env,
+        secondary_keep_count=payload.secondary_keep_count,
+        encrypt=payload.encrypt,
+        copy_to_secondary=payload.copy_to_secondary,
+        run_smoke_check=payload.run_smoke_check,
     )
 
 

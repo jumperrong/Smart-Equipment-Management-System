@@ -30,6 +30,9 @@
         <el-table-column label="类型" width="100">
           <template #default="{ row }"><el-tag :type="woTypeTag(row.type)" size="small">{{ woTypeLabel(row.type) }}</el-tag></template>
         </el-table-column>
+        <el-table-column label="紧急度" width="100" align="center">
+          <template #default="{ row }"><el-tag :type="urgencyTag(row.urgency)" size="small" effect="light">{{ urgencyLabel(row.urgency) }}</el-tag></template>
+        </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }"><el-tag :type="woStatusTag(row.status)" size="small">{{ woStatusLabel(row.status) }}</el-tag></template>
         </el-table-column>
@@ -42,6 +45,15 @@
         </el-table-column>
         <el-table-column label="创建时间" width="160">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column label="持续时长" width="130" align="center">
+          <template #default="{ row }">
+            <el-tag
+              :type="durationTagType(row)"
+              effect="light"
+              size="small"
+            >{{ row.duration_text || '-' }}</el-tag>
+          </template>
         </el-table-column>
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
@@ -61,6 +73,16 @@
               <el-select v-model="form.type" style="width:100%">
                 <el-option v-for="t in WORK_ORDER_TYPE_OPTIONS" :key="t" :label="woTypeLabel(t)" :value="t" />
               </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="紧急度" prop="urgency">
+              <el-radio-group v-model="form.urgency">
+                <el-radio-button label="LOW">低</el-radio-button>
+                <el-radio-button label="NORMAL">普通</el-radio-button>
+                <el-radio-button label="HIGH">高</el-radio-button>
+                <el-radio-button label="CRITICAL">紧急</el-radio-button>
+              </el-radio-group>
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -104,6 +126,7 @@ import { useUserStore } from '@/stores'
 import {
   WORK_ORDER_TYPE_OPTIONS, WORK_ORDER_STATUS_OPTIONS,
   woTypeLabel, woTypeTag, woStatusLabel, woStatusTag, faultCategoryLabel, formatTime,
+  urgencyLabel, urgencyTag,
 } from '@/utils'
 
 const userStore = useUserStore()
@@ -117,6 +140,15 @@ const equipments = ref([])
 function eqName(id) {
   const e = equipments.value.find((x) => x.id === id)
   return e ? `${e.asset_no || ''} ${e.name}` : `#${id}`
+}
+
+// 持续时长颜色：已完成绿色，进行中按时长黄/红
+function durationTagType(row) {
+  if (!row.duration_hours && row.duration_hours !== 0) return 'info'
+  if (row.status === 'COMPLETED' || row.status === 'CANCELLED') return 'success'
+  if (row.duration_hours >= 48) return 'danger'   // >2天 红色
+  if (row.duration_hours >= 24) return 'warning'  // 1-2天 橙色
+  return 'success'                                  // <1天 绿色
 }
 
 async function loadEquipments() {
@@ -139,14 +171,23 @@ async function load() {
 const dialogVisible = ref(false)
 const saving = ref(false)
 const formRef = ref(null)
-const form = reactive({ id: null, type: 'REPAIR', equipment_id: null, title: '', description: '', planned_start: null, planned_end: null, remark: '' })
+const form = reactive({
+  id: null, type: 'REPAIR', equipment_id: null, title: '', description: '',
+  urgency: 'NORMAL',
+  planned_start: null, planned_end: null, remark: '',
+})
 const formRules = {
   type: [{ required: true, message: '请选择类型', trigger: 'change' }],
+  urgency: [{ required: true, message: '请选择紧急度', trigger: 'change' }],
   equipment_id: [{ required: true, message: '请选择设备', trigger: 'change' }],
   title: [{ required: true, message: '请输入标题', trigger: 'blur' }],
 }
 function openDialog(row = null) {
-  Object.assign(form, { id: null, type: 'REPAIR', equipment_id: null, title: '', description: '', planned_start: null, planned_end: null, remark: '' })
+  Object.assign(form, {
+    id: null, type: 'REPAIR', equipment_id: null, title: '', description: '',
+    urgency: 'NORMAL',
+    planned_start: null, planned_end: null, remark: '',
+  })
   if (row) Object.assign(form, JSON.parse(JSON.stringify(row)))
   dialogVisible.value = true
 }
@@ -157,7 +198,10 @@ async function onSave() {
     const payload = JSON.parse(JSON.stringify(form))
     if (payload.id) {
       const { id, ...rest } = payload
-      await updateWorkOrder(id, { title: rest.title, description: rest.description, planned_start: rest.planned_start, planned_end: rest.planned_end, remark: rest.remark })
+      await updateWorkOrder(id, {
+        title: rest.title, description: rest.description, urgency: rest.urgency,
+        planned_start: rest.planned_start, planned_end: rest.planned_end, remark: rest.remark,
+      })
       ElMessage.success('已更新')
     } else {
       delete payload.id

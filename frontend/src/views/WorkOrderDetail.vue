@@ -22,12 +22,24 @@
             <el-descriptions-item label="工单号">{{ wo.order_no }}</el-descriptions-item>
             <el-descriptions-item label="类型">{{ woTypeLabel(wo.type) }}</el-descriptions-item>
             <el-descriptions-item label="状态">{{ woStatusLabel(wo.status) }}</el-descriptions-item>
+            <el-descriptions-item label="紧急度">
+              <el-tag :type="urgencyTag(wo.urgency)" effect="light" size="small">{{ urgencyLabel(wo.urgency) }}</el-tag>
+            </el-descriptions-item>
             <el-descriptions-item label="创建时间">{{ formatTime(wo.created_at) }}</el-descriptions-item>
             <el-descriptions-item label="计划开始">{{ formatTime(wo.planned_start) }}</el-descriptions-item>
             <el-descriptions-item label="计划结束">{{ formatTime(wo.planned_end) }}</el-descriptions-item>
             <el-descriptions-item label="实际开始">{{ formatTime(wo.actual_start) }}</el-descriptions-item>
             <el-descriptions-item label="实际结束">{{ formatTime(wo.actual_end) }}</el-descriptions-item>
             <el-descriptions-item label="完成时间">{{ formatTime(wo.completed_at) }}</el-descriptions-item>
+            <el-descriptions-item label="持续时长">
+              <el-tag
+                v-if="wo.duration_text"
+                :type="wo.status === 'COMPLETED' || wo.status === 'CANCELLED' ? 'success' : (wo.duration_hours >= 48 ? 'danger' : wo.duration_hours >= 24 ? 'warning' : 'success')"
+                effect="light"
+                size="small"
+              >{{ wo.duration_text }}</el-tag>
+              <span v-else>-</span>
+            </el-descriptions-item>
             <el-descriptions-item label="描述" :span="2">{{ wo.description || '-' }}</el-descriptions-item>
             <el-descriptions-item label="备注" :span="2">{{ wo.remark || '-' }}</el-descriptions-item>
           </el-descriptions>
@@ -56,7 +68,7 @@
         </el-card>
       </el-col>
 
-      <!-- 右：备件领用 + 报修来源 -->
+      <!-- 右：备件领用 -->
       <el-col :span="9">
         <el-card shadow="never" class="mb-12">
           <template #header>
@@ -72,13 +84,6 @@
             <el-table-column prop="qty" label="数量" width="70" />
             <el-table-column prop="remark" label="备注" min-width="100" />
           </el-table>
-        </el-card>
-
-        <el-card v-if="wo.source_report_id" shadow="never">
-          <template #header><span class="card-title">报修来源</span></template>
-          <el-descriptions :column="1" border size="small">
-            <el-descriptions-item label="报修单ID">#{{ wo.source_report_id }}</el-descriptions-item>
-          </el-descriptions>
         </el-card>
       </el-col>
     </el-row>
@@ -160,6 +165,7 @@ import { useUserStore } from '@/stores'
 import {
   WORK_ORDER_STATUS_OPTIONS, FAULT_CATEGORY_OPTIONS,
   woTypeLabel, woTypeTag, woStatusLabel, woStatusTag, faultCategoryLabel, formatTime,
+  urgencyLabel, urgencyTag,
 } from '@/utils'
 
 const route = useRoute()

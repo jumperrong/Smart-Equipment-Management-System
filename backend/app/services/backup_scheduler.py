@@ -34,8 +34,12 @@ DEFAULTS = {
     "BACKUP_SCHEDULE_CRON": "0 2 * * *",
     "BACKUP_SCHEDULE_SUB_DIR": "scheduled",
     "BACKUP_SCHEDULE_KEEP_COUNT": 30,
+    "BACKUP_SCHEDULE_SECONDARY_KEEP_COUNT": 14,
     "BACKUP_SCHEDULE_INCLUDE_UPLOADS": True,
     "BACKUP_SCHEDULE_INCLUDE_ENV": True,
+    "BACKUP_SCHEDULE_ENCRYPT": False,
+    "BACKUP_SCHEDULE_COPY_TO_SECONDARY": False,
+    "BACKUP_SCHEDULE_RUN_SMOKE_CHECK": True,
 }
 
 _scheduler: Optional[BackgroundScheduler] = None
@@ -59,11 +63,23 @@ def _get_config() -> dict:
             "keep_count": system_setting_service.get_setting_value(
                 db, "BACKUP_SCHEDULE_KEEP_COUNT", DEFAULTS["BACKUP_SCHEDULE_KEEP_COUNT"]
             ),
+            "secondary_keep_count": system_setting_service.get_setting_value(
+                db, "BACKUP_SCHEDULE_SECONDARY_KEEP_COUNT", DEFAULTS["BACKUP_SCHEDULE_SECONDARY_KEEP_COUNT"]
+            ),
             "include_uploads": system_setting_service.get_setting_value(
                 db, "BACKUP_SCHEDULE_INCLUDE_UPLOADS", DEFAULTS["BACKUP_SCHEDULE_INCLUDE_UPLOADS"]
             ),
             "include_env": system_setting_service.get_setting_value(
                 db, "BACKUP_SCHEDULE_INCLUDE_ENV", DEFAULTS["BACKUP_SCHEDULE_INCLUDE_ENV"]
+            ),
+            "encrypt": system_setting_service.get_setting_value(
+                db, "BACKUP_SCHEDULE_ENCRYPT", DEFAULTS["BACKUP_SCHEDULE_ENCRYPT"]
+            ),
+            "copy_to_secondary": system_setting_service.get_setting_value(
+                db, "BACKUP_SCHEDULE_COPY_TO_SECONDARY", DEFAULTS["BACKUP_SCHEDULE_COPY_TO_SECONDARY"]
+            ),
+            "run_smoke_check": system_setting_service.get_setting_value(
+                db, "BACKUP_SCHEDULE_RUN_SMOKE_CHECK", DEFAULTS["BACKUP_SCHEDULE_RUN_SMOKE_CHECK"]
             ),
             "last_run": system_setting_service.get_setting_value(
                 db, "BACKUP_SCHEDULE_LAST_RUN", None
@@ -89,25 +105,49 @@ def _set_last_run(status: str):
 # ---------- 定时任务执行体 ----------
 
 def _run_backup():
-    """定时任务执行体：创建备份 + 清理旧备份。"""
+    """定时任务执行体：创建备份(可选加密) → 复制到异地 → 烟雾校验 → 清理旧备份。"""
     config = _get_config()
     now_str = datetime.now().isoformat(timespec="seconds")
 
     try:
-        info = backup_service.create_backup(
+        # 新的全流程：zip → encrypt → secondary → smoke check
+        result = backup_service.create_backup_full(
             sub_dir=config["sub_dir"] or None,
             note=f"定时备份 ({now_str})",
             include_uploads=config["include_uploads"],
             include_env=config["include_env"],
+            encrypt=bool(config.get("encrypt")),
+            copy_to_secondary=bool(config.get("copy_to_secondary")),
+            run_smoke_check=bool(config.get("run_smoke_check")),
+            secondary_keep_count=int(config.get("secondary_keep_count") or 14),
         )
-        # 清理旧备份
-        cleaned = 0
+        info = result["backup"]
+        # 再清理本地目录
+        cleaned_local = 0
         if config["keep_count"] and config["keep_count"] > 0:
-            cleaned = _cleanup_old_backups(config["sub_dir"], config["keep_count"])
+            cleaned_local = _cleanup_old_backups(config["sub_dir"], config["keep_count"])
 
-        status = f"成功: {info['file_name']} ({info['size_human']})"
-        if cleaned:
-            status += f"，已清理 {cleaned} 个旧备份"
+        # 状态字符串：把 encrypt / secondary / smoke 结果写出来
+        parts = []
+        parts.append(f"{info['file_name']} ({info['size_human']})")
+        if result["encrypt"].get("ok"):
+            parts.append(f"已加密:{result['encrypt']['file_name']}")
+        elif result["encrypt"].get("error"):
+            parts.append(f"加密跳过({result['encrypt']['error']})")
+        if result["secondary"].get("ok"):
+            parts.append(f"异地副本OK({result['secondary']['file_name']}, 清理{result['secondary'].get('cleaned_count', 0)})")
+        elif result["secondary"].get("error"):
+            parts.append(f"异地副本跳过({result['secondary']['error']})")
+        if result["smoke_check"].get("ok"):
+            smoke = result["smoke_check"].get("detail") or {}
+            parts.append(
+                f"还原测试OK(db_tables={smoke.get('db_tables_count')}, users={smoke.get('db_users_count')}, uploads={smoke.get('uploads_count')})"
+            )
+        elif result["smoke_check"].get("error"):
+            parts.append(f"还原测试失败({result['smoke_check']['error']})")
+        if cleaned_local:
+            parts.append(f"本地清理{cleaned_local}份旧备份")
+        status = "成功: " + "；".join(parts)
         logger.info("定时备份%s", status)
         _set_last_run(status)
     except Exception as e:
@@ -221,6 +261,10 @@ def update_schedule_config(
     keep_count: int,
     include_uploads: bool,
     include_env: bool,
+    secondary_keep_count: int = 14,
+    encrypt: bool = False,
+    copy_to_secondary: bool = False,
+    run_smoke_check: bool = True,
 ) -> dict:
     """更新定时备份配置并重新调度。"""
     # 校验 cron 表达式
@@ -236,8 +280,12 @@ def update_schedule_config(
         system_setting_service.set_setting_value(db, "BACKUP_SCHEDULE_CRON", cron)
         system_setting_service.set_setting_value(db, "BACKUP_SCHEDULE_SUB_DIR", sub_dir)
         system_setting_service.set_setting_value(db, "BACKUP_SCHEDULE_KEEP_COUNT", keep_count)
+        system_setting_service.set_setting_value(db, "BACKUP_SCHEDULE_SECONDARY_KEEP_COUNT", secondary_keep_count)
         system_setting_service.set_setting_value(db, "BACKUP_SCHEDULE_INCLUDE_UPLOADS", include_uploads)
         system_setting_service.set_setting_value(db, "BACKUP_SCHEDULE_INCLUDE_ENV", include_env)
+        system_setting_service.set_setting_value(db, "BACKUP_SCHEDULE_ENCRYPT", encrypt)
+        system_setting_service.set_setting_value(db, "BACKUP_SCHEDULE_COPY_TO_SECONDARY", copy_to_secondary)
+        system_setting_service.set_setting_value(db, "BACKUP_SCHEDULE_RUN_SMOKE_CHECK", run_smoke_check)
     finally:
         db.close()
 
@@ -251,18 +299,36 @@ def trigger_now() -> dict:
     now_str = datetime.now().isoformat(timespec="seconds")
 
     try:
-        info = backup_service.create_backup(
+        result = backup_service.create_backup_full(
             sub_dir=config["sub_dir"] or None,
             note=f"手动触发定时备份 ({now_str})",
             include_uploads=config["include_uploads"],
             include_env=config["include_env"],
+            encrypt=bool(config.get("encrypt")),
+            copy_to_secondary=bool(config.get("copy_to_secondary")),
+            run_smoke_check=bool(config.get("run_smoke_check")),
+            secondary_keep_count=int(config.get("secondary_keep_count") or 14),
         )
+        info = result["backup"]
         cleaned = 0
         if config["keep_count"] and config["keep_count"] > 0:
             cleaned = _cleanup_old_backups(config["sub_dir"], config["keep_count"])
-        status = f"成功: {info['file_name']} ({info['size_human']})"
+        parts = [f"{info['file_name']} ({info['size_human']})"]
+        if result["encrypt"].get("ok"):
+            parts.append(f"加密:{result['encrypt']['file_name']}")
+        elif result["encrypt"].get("error"):
+            parts.append(f"加密跳过({result['encrypt']['error']})")
+        if result["secondary"].get("ok"):
+            parts.append(f"异地副本OK({result['secondary']['file_name']})")
+        elif result["secondary"].get("error"):
+            parts.append(f"异地副本跳过({result['secondary']['error']})")
+        if result["smoke_check"].get("ok"):
+            parts.append("还原测试OK")
+        elif result["smoke_check"].get("error"):
+            parts.append(f"还原测试失败({result['smoke_check']['error']})")
         if cleaned:
-            status += f"，已清理 {cleaned} 个旧备份"
+            parts.append(f"本地清理{cleaned}份")
+        status = "成功: " + "；".join(parts)
         _set_last_run(status)
     except Exception as e:
         _set_last_run(f"失败: {e}")
@@ -271,6 +337,9 @@ def trigger_now() -> dict:
     return {
         "ok": True,
         "backup": info,
+        "encrypt": result.get("encrypt"),
+        "secondary": result.get("secondary"),
+        "smoke_check": result.get("smoke_check"),
         "cleaned": cleaned,
         "status": status,
     }

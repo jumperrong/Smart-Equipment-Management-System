@@ -48,12 +48,12 @@ export function requiresDetail(s) {
 }
 
 // ---------- 工单 ----------
-export const WORK_ORDER_TYPE_OPTIONS = ['PM', 'REPAIR', 'REPORT']
+export const WORK_ORDER_TYPE_OPTIONS = ['PM', 'REPAIR']
 export function woTypeLabel(t) {
-  return ({ PM: '预防性维护', REPAIR: '故障维修', REPORT: '报修转单' }[t]) || t
+  return ({ PM: '预防性维护', REPAIR: '故障维修' }[t]) || t
 }
 export function woTypeTag(t) {
-  return ({ PM: 'warning', REPAIR: 'danger', REPORT: 'primary' }[t]) || 'info'
+  return ({ PM: 'warning', REPAIR: 'danger' }[t]) || 'info'
 }
 
 export const WORK_ORDER_STATUS_OPTIONS = [
@@ -115,14 +115,6 @@ export function movementLabel(m) {
 }
 export function movementTag(m) {
   return ({ IN: 'success', OUT: 'danger', ADJUST: 'warning' }[m]) || 'info'
-}
-
-// ---------- 报修单状态 ----------
-export function reportStatusLabel(s) {
-  return ({ OPEN: '待处理', CONVERTED: '已转单', CLOSED: '已关闭' }[s]) || s
-}
-export function reportStatusTag(s) {
-  return ({ OPEN: 'warning', CONVERTED: 'primary', CLOSED: 'info' }[s]) || 'info'
 }
 
 // ---------- 8D 报告 ----------

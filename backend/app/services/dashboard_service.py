@@ -91,6 +91,24 @@ def seed_demo_statuses(db: Session):
         db.add(log)
     db.commit()
 
+    # ============================================================
+    # 【修复】PM 阶段前置：为所有第一轮生成的"open 状态记录"建立映射引用，
+    # 以便后续 PM 进行中时将对应的旧 open 记录关闭（确保每台设备最多 1 条 open）。
+    # ============================================================
+    first_open_log_map = {}  # eq_id -> EquipmentStatusLog
+    for eq in all_eqs:
+        first_open = (
+            db.query(EquipmentStatusLog)
+            .filter(
+                EquipmentStatusLog.equipment_id == eq.id,
+                EquipmentStatusLog.end_time.is_(None),
+            )
+            .order_by(EquipmentStatusLog.id.asc())  # 第一轮那条
+            .first()
+        )
+        if first_open:
+            first_open_log_map[eq.id] = first_open
+
     # ================ 演示数据：PM 计划 & 对应实际 PM 状态段 ================
     # 先清空旧计划（演示用，便于重复）
     db.query(PMPlan).delete(synchronize_session=False)
@@ -169,11 +187,24 @@ def seed_demo_statuses(db: Session):
         db.flush()
 
         # --- 实际 PM 状态日志 ---
+        # 【修复】每次生成已结束的PM段后，追加一条"回到 RUN/IDLE"的收尾日志
+        # 使 to_status 链条与实际 current_status 一致：
+        #   - 如果设备最后被标记为RUN → 收尾用 RUN
+        #   - 如果标记为IDLE → 收尾用 IDLE
+        #   - 如果标记为PM（正在进行）→ 不追加（PM是open状态）
+        def _status_after(eq_id):
+            """根据第一轮分配的 current_status 决定 PM 结束后回到什么状态（fallback=RUN）。"""
+            e = next((x for x in all_eqs if x.id == eq_id), None)
+            if e and e.current_status in (EquipmentStatus.RUN, EquipmentStatus.IDLE):
+                return e.current_status
+            return EquipmentStatus.RUN  # 默认回到RUN
+
         # 1) 上一个周期：应用偏差（每种设备都给上周期也加上偏差，保证历史数据也有对比效果）
         prev_due = anchor_day - timedelta(days=cycle_days)
         pm_plan_start_1 = prev_due + timedelta(hours=start_hour)
         off_1, dur_act_1 = _apply_variance(mode, duration_min)
         pm_start_1 = pm_plan_start_1 + timedelta(minutes=off_1)
+        pm_end_1 = pm_start_1 + timedelta(minutes=dur_act_1)
         detail_suffix_1 = ""
         if off_1 < -15:
             detail_suffix_1 += f"；提前 {-off_1//60}h{-off_1%60}m 进行"
@@ -186,18 +217,32 @@ def seed_demo_statuses(db: Session):
             from_status=EquipmentStatus.IDLE,
             to_status=EquipmentStatus.PM,
             start_time=pm_start_1,
-            end_time=pm_start_1 + timedelta(minutes=dur_act_1),
+            end_time=pm_end_1,
             duration_minutes=float(dur_act_1),
             reason_code="PM",
             reason_detail=f"计划 PM 执行：{plan_name}（周期 {cycle_days}d）{detail_suffix_1}".rstrip("；"),
             operator_id=operator_id,
         )
         db.add(log1)
+        # 上周期PM → 回 RUN/IDLE 收尾
+        after1 = _status_after(eq.id)
+        db.add(EquipmentStatusLog(
+            equipment_id=eq.id,
+            from_status=EquipmentStatus.PM,
+            to_status=after1,
+            start_time=pm_end_1,
+            end_time=pm_end_1 + timedelta(minutes=1),
+            duration_minutes=1.0,
+            reason_code="PRODUCTION",
+            reason_detail=f"{plan_name} 完成，恢复生产",
+            operator_id=operator_id,
+        ))
 
         # 2) 本周：应用偏差
         this_plan_start = anchor_day + timedelta(hours=start_hour)
         off_2, dur_act_2 = _apply_variance(mode, duration_min)
         this_pm_start = this_plan_start + timedelta(minutes=off_2)
+        this_pm_plan_end = this_pm_start + timedelta(minutes=dur_act_2)
         # 构建备注，说明偏差原因
         detail_suffix_2 = ""
         if off_2 < -15:
@@ -208,22 +253,47 @@ def seed_demo_statuses(db: Session):
             detail_suffix_2 += f"；推迟 {h}h{m}m 开始（{random.choice(['前一工单号延迟释放', '备件未到', '人员冲突'])}）"
         if dur_act_2 - duration_min > 30:
             detail_suffix_2 += f"；超时 {dur_act_2-duration_min}m（{random.choice(['发现密封圈老化需更换', '校准参数需反复调整', '真空检漏发现微漏点'])}）"
-        is_running = (this_pm_start <= now < this_pm_start + timedelta(minutes=dur_act_2))
+        is_running = (this_pm_start <= now < this_pm_plan_end)
         is_future = (this_pm_start > now)
         if is_running:
             eq.current_status = EquipmentStatus.PM
-        log2 = EquipmentStatusLog(
-            equipment_id=eq.id,
-            from_status=EquipmentStatus.RUN,
-            to_status=EquipmentStatus.PM,
-            start_time=this_pm_start,
-            end_time=None if is_running else (this_pm_start + timedelta(minutes=dur_act_2)),
-            duration_minutes=None if is_running else float(dur_act_2),
-            reason_code="PM",
-            reason_detail=f"本期 PM 执行：{plan_name}{detail_suffix_2}".rstrip("；"),
-            operator_id=operator_id,
-        )
-        db.add(log2)
+            # 【修复】本轮要创建 OPEN 的 PM log，先关闭第一轮残留的 OPEN，避免设备有多个 OPEN
+            old_open = first_open_log_map.pop(eq.id, None)
+            if old_open:
+                dur_sec = max(1, int((this_pm_start - old_open.start_time).total_seconds()))
+                old_open.end_time = this_pm_start
+                old_open.duration_minutes = round(dur_sec / 60.0, 2)
+                db.add(old_open)
+        # 【修复】is_future：本周 PM 还没开始，不造状态记录（计划只存在于 PMPlan），
+        # 避免生成 to_status=PM/start_time 在未来 的 OPEN 或 CLOSED 与设备实际 current_status 冲突
+        if not is_future:
+            log2 = EquipmentStatusLog(
+                equipment_id=eq.id,
+                from_status=EquipmentStatus.RUN,
+                to_status=EquipmentStatus.PM,
+                start_time=this_pm_start,
+                end_time=None if is_running else this_pm_plan_end,
+                duration_minutes=None if is_running else float(dur_act_2),
+                reason_code="PM",
+                reason_detail=f"本期 PM 执行：{plan_name}{detail_suffix_2}".rstrip("；"),
+                operator_id=operator_id,
+            )
+            db.add(log2)
+            # 本周PM已完成且未在进行中 → 回 RUN/IDLE 收尾
+            if not is_running:
+                after2 = _status_after(eq.id)
+                resume_t = this_pm_plan_end
+                db.add(EquipmentStatusLog(
+                    equipment_id=eq.id,
+                    from_status=EquipmentStatus.PM,
+                    to_status=after2,
+                    start_time=resume_t,
+                    end_time=resume_t + timedelta(minutes=1),
+                    duration_minutes=1.0,
+                    reason_code="PRODUCTION",
+                    reason_detail=f"本期 {plan_name} 完成，恢复生产",
+                    operator_id=operator_id,
+                ))
 
         # 3) 额外：部分设备有一条"非计划 PM"（突发维护）记录，丰富日历展示
         if week_day in (1, 4):  # 周二、周五的设备加一条突发 PM
@@ -231,18 +301,57 @@ def seed_demo_statuses(db: Session):
             if unplanned_start < now:
                 unplanned_dur = random.randint(60, 150)
                 unplanned_end = unplanned_start + timedelta(minutes=unplanned_dur)
+                unplanned_running = (unplanned_start <= now < unplanned_end)
+                if unplanned_running:
+                    # 突发PM正在进行：也关闭第一轮旧OPEN，避免冲突；并标记 current_status
+                    eq.current_status = EquipmentStatus.PM
+                    old_open2 = first_open_log_map.pop(eq.id, None)
+                    if old_open2:
+                        dur_sec = max(1, int((unplanned_start - old_open2.start_time).total_seconds()))
+                        old_open2.end_time = unplanned_start
+                        old_open2.duration_minutes = round(dur_sec / 60.0, 2)
+                        db.add(old_open2)
+                # 突发 DOWN→PM（不管是否进行中都创建，进行中的 end_time=None）
                 log3 = EquipmentStatusLog(
                     equipment_id=eq.id,
                     from_status=EquipmentStatus.DOWN,
                     to_status=EquipmentStatus.PM,
                     start_time=unplanned_start,
-                    end_time=unplanned_end if unplanned_end < now else None,
-                    duration_minutes=float(unplanned_dur) if unplanned_end < now else None,
+                    end_time=None if unplanned_running else unplanned_end,
+                    duration_minutes=float(unplanned_dur) if not unplanned_running else None,
                     reason_code="UNPLANNED",
                     reason_detail=f"突发维护：{plan_name} 前置检修",
                     operator_id=operator_id,
                 )
                 db.add(log3)
+                # 非进行中的突发PM：补齐 RUN→DOWN → PM→RUN/IDLE 的完整链条
+                if not unplanned_running:
+                    after3 = _status_after(eq.id)
+                    # 先补 DOWN 的来源（时间在突发PM之前）：RUN → DOWN
+                    down_start = unplanned_start - timedelta(minutes=random.randint(5, 30))
+                    db.add(EquipmentStatusLog(
+                        equipment_id=eq.id,
+                        from_status=EquipmentStatus.RUN,
+                        to_status=EquipmentStatus.DOWN,
+                        start_time=down_start,
+                        end_time=unplanned_start,
+                        duration_minutes=float(round((unplanned_start - down_start).total_seconds() / 60, 1)),
+                        reason_code="FAULT",
+                        reason_detail=f"突发故障停机，触发 {plan_name} 前置检修",
+                        operator_id=operator_id,
+                    ))
+                    # 突发PM结束 → 恢复生产
+                    db.add(EquipmentStatusLog(
+                        equipment_id=eq.id,
+                        from_status=EquipmentStatus.PM,
+                        to_status=after3,
+                        start_time=unplanned_end,
+                        end_time=unplanned_end + timedelta(minutes=1),
+                        duration_minutes=1.0,
+                        reason_code="PRODUCTION",
+                        reason_detail=f"突发维护完成，恢复生产",
+                        operator_id=operator_id,
+                    ))
     db.commit()
 
 
@@ -273,11 +382,47 @@ def get_dashboard(db: Session, log_limit: int = 10) -> DashboardOut:
                 prod_name_map[pr.equipment_id] = pname
 
     # 每台设备的"当前状态"开始时间 + 最近变更详情
-    # 取该设备最新一条状态日志联查 User
+    # 【修复】优先使用"进行中(open)的日志"，否则使用"to_status == current_status 的最新日志"
+    # 原因：seed中会追加历史已结束的PM日志（如突发PM），id更大但to_status≠当前状态，
+    # 如果直接取max(id)会导致显示的from→to与设备的current_status不一致。
     current_status_log_map = {}
     if eq_ids:
-        from sqlalchemy import func as sa_func
-        latest_ids_subq = (
+        from sqlalchemy import func as sa_func, and_, or_
+
+        # 子查询A：每台设备的 open 日志(end_time IS NULL)——如果存在，它就是最准确的
+        open_subq = (
+            db.query(
+                EquipmentStatusLog.equipment_id.label("eid"),
+                EquipmentStatusLog.id.label("mid"),
+            )
+            .filter(
+                EquipmentStatusLog.equipment_id.in_(eq_ids),
+                EquipmentStatusLog.end_time.is_(None),
+            )
+            .subquery()
+        )
+
+        # 子查询B：每台设备"to_status == 设备current_status"的最新一条——作为fallback
+        # 先关联 Equipment 取 current_status
+        eq_status = (
+            db.query(Equipment.id.label("eid"), Equipment.current_status.label("cs"))
+            .filter(Equipment.id.in_(eq_ids))
+            .subquery()
+        )
+        # 为每台设备取满足 to_status == cs 的最大 id
+        matching_ids_subq = (
+            db.query(
+                EquipmentStatusLog.equipment_id.label("eid"),
+                sa_func.max(EquipmentStatusLog.id).label("mid"),
+            )
+            .join(eq_status, EquipmentStatusLog.equipment_id == eq_status.c.eid)
+            .filter(EquipmentStatusLog.to_status == eq_status.c.cs)
+            .group_by(EquipmentStatusLog.equipment_id)
+            .subquery()
+        )
+
+        # 再做一次兜底：直接 max(id)（防止上面两种都没有）
+        fallback_ids_subq = (
             db.query(
                 EquipmentStatusLog.equipment_id.label("eid"),
                 sa_func.max(EquipmentStatusLog.id).label("mid"),
@@ -286,18 +431,37 @@ def get_dashboard(db: Session, log_limit: int = 10) -> DashboardOut:
             .group_by(EquipmentStatusLog.equipment_id)
             .subquery()
         )
-        latest_logs = (
-            db.query(EquipmentStatusLog, User.full_name.label("op_name"), User.username.label("op_uname"))
-            .join(
-                latest_ids_subq,
-                EquipmentStatusLog.id == latest_ids_subq.c.mid,
+
+        # 合并：优先顺序 open > matching > fallback（对每个eid取优先级最高的mid）
+        # 用 UNION ALL + 每eid取最大优先级即可，简化为3次查字典合并
+        def _collect(subq):
+            rows = db.query(subq.c.eid, subq.c.mid).all()
+            return {r.eid: r.mid for r in rows}
+
+        open_map = _collect(open_subq)
+        matching_map = _collect(matching_ids_subq)
+        fallback_map = _collect(fallback_ids_subq)
+
+        final_map = {}
+        for eid in eq_ids:
+            if eid in open_map:
+                final_map[eid] = open_map[eid]
+            elif eid in matching_map:
+                final_map[eid] = matching_map[eid]
+            elif eid in fallback_map:
+                final_map[eid] = fallback_map[eid]
+        target_ids = list(final_map.values())
+
+        if target_ids:
+            logs_and_ops = (
+                db.query(EquipmentStatusLog, User.full_name.label("op_name"), User.username.label("op_uname"))
+                .filter(EquipmentStatusLog.id.in_(target_ids))
+                .outerjoin(User, EquipmentStatusLog.operator_id == User.id)
+                .all()
             )
-            .outerjoin(User, EquipmentStatusLog.operator_id == User.id)
-            .all()
-        )
-        for lg, op_name, op_uname in latest_logs:
-            display_name = op_name or op_uname or None
-            current_status_log_map[lg.equipment_id] = (lg, display_name)
+            for lg, op_name, op_uname in logs_and_ops:
+                display_name = op_name or op_uname or None
+                current_status_log_map[lg.equipment_id] = (lg, display_name)
 
     eq_items = []
     status_counts = defaultdict(int)

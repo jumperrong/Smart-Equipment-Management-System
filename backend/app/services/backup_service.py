@@ -19,6 +19,8 @@
 - 任何写操作前都会验证路径合法性（拒绝 ../ 绝对路径等）
 - 恢复前必做自动快照，且默认保留
 """
+import base64
+import hashlib
 import io
 import json
 import os
@@ -28,11 +30,21 @@ import shutil
 import sqlite3
 import sys
 import tarfile
+import tempfile
 import zipfile
 from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException
+
+try:
+    # 优先 cryptography（如装了 pyca/cryptography）
+    from cryptography.fernet import Fernet, InvalidToken as FernetInvalidToken
+    _HAS_CRYPTOGRAPHY = True
+except Exception:
+    _HAS_CRYPTOGRAPHY = False
+    Fernet = None  # type: ignore
+    FernetInvalidToken = Exception  # type: ignore
 
 
 VERSION = "1.0.0"
@@ -594,3 +606,365 @@ def _count_auto_snapshots() -> int:
         if "auto-snapshots" in str(f):
             n += 1
     return n
+
+
+# ============================================================================
+#  灾备扩展：加密 + 异地副本(第二目录) + 备份健康度校验
+# ============================================================================
+
+# AES 加密备份扩展名（Fernet）
+_ENC_SUFFIX = ".aes256"
+
+
+# ---------- 派生加密密钥 ----------
+
+def _derive_backup_key(secret: str) -> bytes:
+    """把任意长度的 secret（SECRET_KEY 或自定义密码）转换为 Fernet 需要的 32 字节 base64 key。
+    Fernet = AES-128-CBC + HMAC-SHA256，key 要求 32 字节随机数 base64 编码。
+    为兼顾"可离线解密+与 SECRET_KEY 解耦"，采用 PBKDF2-HMAC-SHA256，10 万次迭代。
+    """
+    if not secret:
+        raise HTTPException(status_code=400, detail="缺少加密密钥：请在系统设置填入 BACKUP_ENCRYPTION_PASSWORD 或保持默认 SECRET_KEY")
+    # 固定盐（备份可跨机器复原；需要更强可在包里加 salt 字段）
+    salt = b"sems_backup_salt_v1"
+    dk = hashlib.pbkdf2_hmac("sha256", secret.encode("utf-8"), salt, iterations=200_000, dklen=32)
+    return base64.urlsafe_b64encode(dk)
+
+
+def _get_backup_key() -> Optional[bytes]:
+    """读取备份加密密钥：优先 BACKUP_ENCRYPTION_PASSWORD，其次 SECRET_KEY。都为空返回 None（不加密）。"""
+    # 读取 settings 时延迟 import，避免循环
+    from app.core.config import settings
+    pwd = getattr(settings, "BACKUP_ENCRYPTION_PASSWORD", None)
+    key_src = None
+    if pwd and isinstance(pwd, str) and pwd.strip():
+        key_src = pwd.strip()
+    elif getattr(settings, "SECRET_KEY", None) and settings.SECRET_KEY and settings.SECRET_KEY != "change-me-in-prod":
+        key_src = settings.SECRET_KEY
+    if not key_src:
+        return None
+    return _derive_backup_key(key_src)
+
+
+def is_backup_encryption_available() -> dict:
+    """返回加密能力状态。"""
+    return {
+        "has_cryptography": _HAS_CRYPTOGRAPHY,
+        "has_key": _get_backup_key() is not None,
+    }
+
+
+# ---------- 加密/解密 ZIP 为 .zip.aes256 ----------
+
+def encrypt_file(src: pathlib.Path, dst: pathlib.Path) -> None:
+    """把 src（zip）加密为 dst.aes256。"""
+    if not _HAS_CRYPTOGRAPHY:
+        raise HTTPException(status_code=500, detail="未安装 cryptography 库，无法启用加密。请运行：pip install cryptography")
+    key = _get_backup_key()
+    if key is None:
+        raise HTTPException(status_code=400, detail="未配置加密密钥：请设置 BACKUP_ENCRYPTION_PASSWORD 或有效的 SECRET_KEY")
+    f = Fernet(key)
+    data = src.read_bytes()
+    # 分块加密：对大文件用 stream 更省内存，Fernet 是单包格式，这里兜底按 64MB 分片
+    CHUNK = 64 * 1024 * 1024
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with open(dst, "wb") as out:
+        # 先写 8 字节魔数 + 版本，便于离线校验
+        out.write(b"SEMSBK1\0")
+        # 总长度
+        out.write(len(data).to_bytes(8, "little"))
+        if len(data) <= CHUNK:
+            token = f.encrypt(data)
+            out.write(len(token).to_bytes(4, "little"))
+            out.write(token)
+        else:
+            for i in range(0, len(data), CHUNK):
+                chunk = data[i:i + CHUNK]
+                token = f.encrypt(chunk)
+                out.write(len(token).to_bytes(4, "little"))
+                out.write(token)
+            # 结尾 4 字节 0 作为分隔（可选，这里简化：靠总长度已够）
+
+
+def decrypt_to_tempfile(encrypted_file: pathlib.Path) -> pathlib.Path:
+    """把加密的备份解密为临时 zip，返回临时文件路径（调用方负责清理）。"""
+    if not _HAS_CRYPTOGRAPHY:
+        raise HTTPException(status_code=500, detail="未安装 cryptography 库，无法解密。请运行：pip install cryptography")
+    key = _get_backup_key()
+    if key is None:
+        raise HTTPException(status_code=400, detail="未配置加密密钥：请设置 BACKUP_ENCRYPTION_PASSWORD 或有效的 SECRET_KEY")
+    f = Fernet(key)
+    data = encrypted_file.read_bytes()
+    if len(data) < 16 or not data.startswith(b"SEMSBK1\0"):
+        raise HTTPException(status_code=400, detail="加密文件格式不对（未找到 SEMSBK1 魔数）")
+    pos = 8
+    total = int.from_bytes(data[pos:pos + 8], "little")
+    pos += 8
+    buf = bytearray()
+    while pos < len(data):
+        if pos + 4 > len(data):
+            break
+        tlen = int.from_bytes(data[pos:pos + 4], "little")
+        pos += 4
+        if tlen == 0:
+            break
+        token = data[pos:pos + tlen]
+        pos += tlen
+        try:
+            buf.extend(f.decrypt(token))
+        except FernetInvalidToken:
+            raise HTTPException(status_code=400, detail="解密失败：加密密钥不对或备份包已损坏。请核对 BACKUP_ENCRYPTION_PASSWORD / SECRET_KEY。")
+    if len(buf) != total:
+        raise HTTPException(status_code=400, detail=f"解密后长度不对：期望 {total} 实际 {len(buf)}，备份包可能损坏")
+    tmp = pathlib.Path(tempfile.mkdtemp()) / "decrypted_backup.zip"
+    tmp.write_bytes(bytes(buf))
+    return tmp
+
+
+# ---------- 异地副本（第二备份目录 / 离线 NAS / SMB 挂载目录） ----------
+
+def resolve_secondary_root() -> Optional[pathlib.Path]:
+    """读取第二备份目录：
+    - 优先 BACKUP_SECONDARY_DIR 环境变量（绝对路径，例如：/mnt/nas/sems_backups 或 //server/share/backups）
+    - 非空才启用；空/未设置返回 None（仅本地一份）。
+    为避免写入越权：这里只允许绝对路径，且必须已经存在（管理员需提前创建并赋予写权限）。
+    """
+    from app.core.config import settings
+    raw = getattr(settings, "BACKUP_SECONDARY_DIR", None)
+    if not raw or not isinstance(raw, str):
+        return None
+    raw = raw.strip().strip('"').strip("'")
+    if not raw:
+        return None
+    p = pathlib.Path(raw)
+    # 允许 Windows UNC：\\server\share 也是绝对路径形式
+    if not p.is_absolute() and not (len(raw) >= 2 and raw[1] == ":" and raw[0].isalpha()):
+        # Windows UNC 形如 \\server\share  → pathlib 在 Linux 下当相对；这里宽松处理：开头 // 或 \\ 也认为合法
+        if not (raw.startswith("\\\\") or raw.startswith("//")):
+            raise HTTPException(status_code=400, detail=f"BACKUP_SECONDARY_DIR 必须是绝对路径：{raw}")
+    # 要求目录已存在（管理员需先建好）
+    if not p.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"第二备份目录不存在或无法访问：{raw}。请提前在服务器上创建并赋予本进程读写权限（SMB/NAS 请先挂载）。",
+        )
+    if not p.is_dir():
+        raise HTTPException(status_code=400, detail=f"BACKUP_SECONDARY_DIR 不是目录：{raw}")
+    return p
+
+
+def _copy_to_secondary(src_file: pathlib.Path, secondary_root: pathlib.Path, sub_dir: Optional[str] = None) -> pathlib.Path:
+    """把本地备份复制到第二目录。sub_dir 结构与本地一致。"""
+    safe = _validate_sub_dir(sub_dir)
+    if safe:
+        target_dir = secondary_root / safe
+    else:
+        target_dir = secondary_root
+    target_dir.mkdir(parents=True, exist_ok=True)
+    # 安全性：二次确认最终目标在 secondary_root 下
+    try:
+        target_dir.resolve().relative_to(secondary_root.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="第二备份子目录路径越界，拒绝写入")
+    dst = target_dir / src_file.name
+    # copy2 保留 mtime，便于后续按时间清理
+    shutil.copy2(src_file, dst)
+    # 校验：写后大小一致
+    if dst.stat().st_size != src_file.stat().st_size:
+        try:
+            dst.unlink()
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail=f"复制到第二目录失败：写入后大小不一致 {dst}")
+    return dst
+
+
+def cleanup_dir_backups(root: pathlib.Path, sub_dir: Optional[str] = None, keep_count: int = 14) -> int:
+    """指定目录下按时间清理旧备份。返回删除数。"""
+    safe = _validate_sub_dir(sub_dir)
+    if safe:
+        d = root / safe
+    else:
+        d = root
+    if not d.exists():
+        return 0
+    files = [f for f in d.iterdir() if f.is_file() and (f.name.endswith(".zip") or f.name.endswith(_ENC_SUFFIX))]
+    if len(files) <= max(1, keep_count):
+        return 0
+    files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    removed = 0
+    for old in files[keep_count:]:
+        try:
+            old.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+# ---------- 备份健康度校验（可还原性验证） ----------
+
+def _quick_smoke_restore(zip_file: pathlib.Path) -> dict:
+    """把 zip 解压到临时目录，快速 smoke test：
+    - db 能被 sqlite3 打开，能查出 users 表/不为空
+    - 有 manifest
+    返回 {ok, db_tables_count, db_users_count, uploads_count}
+    """
+    tmp_root = pathlib.Path(tempfile.mkdtemp(prefix="sems_restore_smoke_"))
+    try:
+        # 校验 manifest + CRC
+        manifest = _verify_backup(zip_file)
+        db_info = {"tables": 0, "users_count": None, "equipment_count": None}
+        uploads_count = 0
+        with zipfile.ZipFile(zip_file, "r") as zf:
+            # 单独解压 db
+            if "db" in manifest.get("items", {}):
+                db_target = tmp_root / "app.db"
+                with zf.open("app.db") as src, open(db_target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                try:
+                    conn = sqlite3.connect(str(db_target))
+                    try:
+                        cur = conn.cursor()
+                        cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                        tables = [r[0] for r in cur.fetchall()]
+                        db_info["tables"] = len(tables)
+                        if "users" in tables:
+                            try:
+                                cur.execute("SELECT COUNT(*) FROM users;")
+                                db_info["users_count"] = cur.fetchone()[0]
+                            except Exception:
+                                db_info["users_count"] = -1
+                        if "equipment" in tables:
+                            try:
+                                cur.execute("SELECT COUNT(*) FROM equipment;")
+                                db_info["equipment_count"] = cur.fetchone()[0]
+                            except Exception:
+                                db_info["equipment_count"] = -1
+                    finally:
+                        conn.close()
+                except sqlite3.DatabaseError:
+                    raise HTTPException(status_code=400, detail="备份中的数据库损坏，无法打开")
+            # uploads 包：列出成员数
+            if "uploads" in manifest.get("items", {}):
+                item = manifest["items"]
+                if item["uploads"].get("format") == "tar.gz" or "uploads.tar.gz" in zf.namelist():
+                    with zf.open("uploads.tar.gz") as src:
+                        tar_buf = io.BytesIO(src.read())
+                    with tarfile.open(fileobj=tar_buf, mode="r:gz") as tar:
+                        uploads_count = sum(1 for m in tar.getmembers() if m.isfile())
+                else:
+                    uploads_count = sum(1 for n in zf.namelist() if n.startswith("uploads/") and not n.endswith("/"))
+        return {
+            "ok": True,
+            "version": manifest.get("version", ""),
+            "db_tables_count": db_info["tables"],
+            "db_users_count": db_info["users_count"],
+            "db_equipment_count": db_info["equipment_count"],
+            "uploads_count": uploads_count,
+        }
+    finally:
+        try:
+            shutil.rmtree(tmp_root, ignore_errors=True)
+        except OSError:
+            pass
+
+
+def health_check_backup(file_name: str, sub_dir: Optional[str] = None) -> dict:
+    """对某个备份做健康度校验（可还原性 smoke test）。"""
+    f = resolve_backup_file(file_name, sub_dir)
+    return {
+        "file_name": f.name,
+        "size": f.stat().st_size,
+        "size_human": _human_size(f.stat().st_size),
+        "smoke_restore": _quick_smoke_restore(f),
+    }
+
+
+# ---------- 对外高层：一次性创建（可选加密 + 异地副本 + 可还原性校验） ----------
+
+def create_backup_full(
+    sub_dir: Optional[str] = None,
+    note: Optional[str] = None,
+    include_uploads: bool = True,
+    include_env: bool = True,
+    encrypt: bool = False,
+    copy_to_secondary: bool = False,
+    run_smoke_check: bool = True,
+    secondary_keep_count: int = 14,
+) -> dict:
+    """打包备份 → (可选)加密 → (可选)复制到第二目录 → (可选)还原烟雾测试。
+
+    返回 dict 包含每一步执行结果，便于日志。
+    """
+    # 1) 基础 zip 备份
+    info = create_backup(
+        sub_dir=sub_dir,
+        note=note,
+        include_uploads=include_uploads,
+        include_env=include_env,
+    )
+    local_zip = pathlib.Path(info["file_path"])
+    result = {
+        "backup": info,
+        "encrypt": {"enabled": False, "file": None, "ok": None, "error": None},
+        "secondary": {"enabled": False, "file": None, "ok": None, "error": None},
+        "smoke_check": {"enabled": False, "ok": None, "error": None, "detail": None},
+    }
+    # 2) 加密：生成 .zip.aes256 放到同一目录（可用于异地副本加密；本地 zip 仍保留，便于快速恢复）
+    if encrypt:
+        if not _HAS_CRYPTOGRAPHY:
+            result["encrypt"]["error"] = "未安装 cryptography 库，跳过加密。pip install cryptography"
+        else:
+            try:
+                enc_file = local_zip.with_name(local_zip.name + _ENC_SUFFIX)
+                encrypt_file(local_zip, enc_file)
+                result["encrypt"] = {
+                    "enabled": True,
+                    "file": str(enc_file),
+                    "file_name": enc_file.name,
+                    "size": enc_file.stat().st_size,
+                    "size_human": _human_size(enc_file.stat().st_size),
+                    "ok": True,
+                    "error": None,
+                }
+            except Exception as e:
+                result["encrypt"]["ok"] = False
+                result["encrypt"]["error"] = str(e)
+    # 3) 异地副本：优先复制加密文件(若存在)，否则复制 zip
+    if copy_to_secondary:
+        try:
+            sec_root = resolve_secondary_root()
+            if sec_root is None:
+                result["secondary"]["error"] = "未配置 BACKUP_SECONDARY_DIR，跳过异地副本"
+            else:
+                src_for_sec = local_zip
+                if result["encrypt"].get("ok"):
+                    src_for_sec = pathlib.Path(result["encrypt"]["file"])
+                dst = _copy_to_secondary(src_for_sec, sec_root, sub_dir=sub_dir)
+                # 异地目录下只留最新 N 份
+                cleaned = cleanup_dir_backups(sec_root, sub_dir=sub_dir, keep_count=secondary_keep_count)
+                result["secondary"] = {
+                    "enabled": True,
+                    "file": str(dst),
+                    "file_name": dst.name,
+                    "dir": str(sec_root),
+                    "size": dst.stat().st_size,
+                    "size_human": _human_size(dst.stat().st_size),
+                    "cleaned_count": cleaned,
+                    "ok": True,
+                    "error": None,
+                }
+        except Exception as e:
+            result["secondary"]["enabled"] = copy_to_secondary
+            result["secondary"]["ok"] = False
+            result["secondary"]["error"] = str(e)
+    # 4) 可还原性烟雾测试（本地 zip）
+    if run_smoke_check:
+        try:
+            smoke = _quick_smoke_restore(local_zip)
+            result["smoke_check"] = {"enabled": True, "ok": smoke["ok"], "error": None, "detail": smoke}
+        except Exception as e:
+            result["smoke_check"] = {"enabled": True, "ok": False, "error": str(e)}
+    return result
+

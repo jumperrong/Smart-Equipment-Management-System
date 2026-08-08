@@ -5,10 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models import WorkOrderType, WorkOrderStatus, UserRole
+from app.models import WorkOrderType, WorkOrderStatus, UserRole, WorkOrder, WorkOrderStatus as WOS
 from app.schemas import (
     WorkOrderCreate, WorkOrderOut, WorkOrderUpdate, FaultAnalysisIn,
-    SparePartUsageIn, RepairReportCreate, RepairReportOut,
+    SparePartUsageIn,
     PMPlanCreate, PMPlanUpdate, PMPlanOut,
 )
 from app.services import work_order_service
@@ -16,6 +16,38 @@ from app.services.user_service import get_current_user
 from app.services.permission_service import require_permission
 
 router = APIRouter(prefix="/work-orders", tags=["工单管理"])
+
+
+def _calc_duration(wo: WorkOrder):
+    """计算工单持续时长（从创建到完成/取消的时长，或到现在的时长）。
+
+    写入 wo.duration_text（如 "3.5 时" "2 天 5 时"）和 wo.duration_hours。
+    """
+    now = datetime.utcnow()
+    # 已完成/已取消：created_at → completed_at（或 actual_end）
+    if wo.status in (WOS.COMPLETED, WOS.CANCELLED):
+        end_t = wo.completed_at or wo.actual_end or wo.updated_at or now
+    else:
+        # 进行中/待验收等：created_at → now
+        end_t = now
+    start_t = wo.created_at or now
+    if end_t < start_t:
+        end_t = now
+    total_seconds = (end_t - start_t).total_seconds()
+    hours = total_seconds / 3600.0
+
+    if hours < 1:
+        minutes = int(total_seconds / 60)
+        text = f"{minutes} 分"
+    elif hours < 24:
+        text = f"{hours:.1f} 时"
+    else:
+        days = int(hours // 24)
+        remain_h = hours % 24
+        text = f"{days} 天 {remain_h:.0f} 时"
+
+    wo.duration_text = text
+    wo.duration_hours = round(hours, 1)
 
 
 @router.get("", response_model=list[WorkOrderOut])
@@ -26,7 +58,10 @@ def list_work_orders(
     skip: int = 0, limit: int = 100,
     db: Session = Depends(get_db), current_user=Depends(get_current_user),
 ):
-    return work_order_service.list_work_orders(db, equipment_id=equipment_id, type=type, status=status, skip=skip, limit=limit)
+    rows = work_order_service.list_work_orders(db, equipment_id=equipment_id, type=type, status=status, skip=skip, limit=limit)
+    for wo in rows:
+        _calc_duration(wo)
+    return rows
 
 
 @router.post("", response_model=WorkOrderOut, dependencies=[Depends(require_permission("work_order.write"))])
@@ -82,37 +117,12 @@ def generate_due_plans(db: Session = Depends(get_db)):
 router.include_router(pm_router)
 
 
-# 报修单（同样需在 /{wo_id} 之前 include）
-reports_router = APIRouter(prefix="/reports", tags=["报修单"])
-
-
-@reports_router.get("", response_model=list[RepairReportOut])
-def list_reports(
-    equipment_id: Optional[int] = None, status: Optional[str] = None,
-    skip: int = 0, limit: int = 100,
-    db: Session = Depends(get_db), current_user=Depends(get_current_user),
-):
-    return work_order_service.list_reports(db, equipment_id=equipment_id, status=status, skip=skip, limit=limit)
-
-
-@reports_router.post("", response_model=RepairReportOut, dependencies=[Depends(require_permission("repair_report.create"))])
-def create_report(obj_in: RepairReportCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return work_order_service.create_report(db, obj_in, current_user)
-
-
-@reports_router.post("/{report_id}/convert", response_model=WorkOrderOut, dependencies=[Depends(require_permission("repair_report.convert"))])
-def convert_report(report_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return work_order_service.convert_report_to_work_order(db, report_id, current_user)
-
-
-router.include_router(reports_router)
-
-
 @router.get("/{wo_id}", response_model=WorkOrderOut)
 def get_work_order(wo_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     wo = work_order_service.get_work_order(db, wo_id)
     if not wo:
         raise HTTPException(status_code=404, detail="工单不存在")
+    _calc_duration(wo)
     return wo
 
 

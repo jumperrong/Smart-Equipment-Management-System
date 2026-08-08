@@ -37,6 +37,12 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(SAEnum(UserRole), default=UserRole.OPERATOR, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    # 登录失败计数 / 账户临时锁定
+    failed_login_count = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True, comment="账户锁定截止时间")
+    # 强制首次登录改密 / 上次改密时间
+    must_change_password = Column(Boolean, default=False, nullable=False)
+    last_password_changed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -270,8 +276,7 @@ class InspectionResult(Base):
 
 class WorkOrderType(str, Enum):
     PM = "PM"            # 预防性维护
-    REPAIR = "REPAIR"    # 故障维修
-    REPORT = "REPORT"    # 报修转单
+    REPAIR = "REPAIR"    # 故障维修（由 DOWN 触发或手动创建）
 
 
 class WorkOrderStatus(str, Enum):
@@ -330,7 +335,7 @@ class RepairReport(Base):
 
 
 class WorkOrder(Base):
-    """统一工单（PM/维修/报修）"""
+    """统一工单（PM 预防性维护 / REPAIR 故障维修）"""
     __tablename__ = "work_orders"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -341,9 +346,10 @@ class WorkOrder(Base):
     title = Column(String(255), nullable=False, comment="标题/概述")
     description = Column(Text, nullable=True, comment="任务描述")
     assignee_id = Column(Integer, ForeignKey("users.id"), nullable=True, comment="负责人")
-    source_report_id = Column(Integer, ForeignKey("repair_reports.id"), nullable=True, comment="来源报修单")
+    source_report_id = Column(Integer, ForeignKey("repair_reports.id"), nullable=True, comment="旧版来源报修单(历史兼容)")
     pm_plan_id = Column(Integer, ForeignKey("pm_plans.id"), nullable=True, comment="来源PM计划")
-    status_log_id = Column(Integer, ForeignKey("equipment_status_logs.id"), nullable=True, comment="关联状态日志(DOWN)")
+    status_log_id = Column(Integer, ForeignKey("equipment_status_logs.id"), nullable=True, comment="关联状态日志(触发DOWN的那条)")
+    urgency = Column(String(16), default="NORMAL", comment="紧急度: LOW/NORMAL/HIGH/CRITICAL")
     # 故障分析
     fault_category = Column(SAEnum(FaultCategory), nullable=True, comment="故障分类")
     root_cause = Column(Text, nullable=True, comment="根因")

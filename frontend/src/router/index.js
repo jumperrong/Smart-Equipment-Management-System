@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import Layout from '@/layouts/MainLayout.vue'
+import { useUserStore } from '@/stores/user'
 
 const routes = [
   {
@@ -7,6 +8,12 @@ const routes = [
     name: 'Login',
     component: () => import('@/views/Login.vue'),
     meta: { public: true, title: '登录' },
+  },
+  {
+    path: '/change-password',
+    name: 'ChangePassword',
+    component: () => import('@/views/ChangePassword.vue'),
+    meta: { title: '修改密码', requiresAuth: true },
   },
   {
     path: '/',
@@ -51,12 +58,6 @@ const routes = [
         name: 'WorkOrderDetail',
         component: () => import('@/views/WorkOrderDetail.vue'),
         meta: { title: '工单详情', hidden: true },
-      },
-      {
-        path: 'reports',
-        name: 'RepairReports',
-        component: () => import('@/views/RepairReports.vue'),
-        meta: { title: '故障报修', icon: 'WarningFilled' },
       },
       {
         path: 'pm-plans',
@@ -126,11 +127,15 @@ const router = createRouter({
 })
 
 router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem('token')
+  const userStore = useUserStore()
+  const token = userStore.token
   if (to.meta.public) {
     next()
   } else if (!token) {
     next({ name: 'Login', query: { redirect: to.fullPath } })
+  } else if (to.name !== 'ChangePassword' && userStore.must_change_password) {
+    // 使用默认弱密码/首次登录 → 强制跳改密页
+    next({ name: 'ChangePassword' })
   } else {
     next()
   }

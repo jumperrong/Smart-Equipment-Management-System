@@ -37,15 +37,28 @@
         <el-table-column prop="area" label="区域" width="90" />
         <el-table-column prop="model" label="机型" width="120" />
         <el-table-column prop="vendor" label="供应商" width="110" />
-        <el-table-column label="当前状态" width="120">
+        <el-table-column label="当前状态" width="140" align="center">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.current_status)" effect="dark" size="small">{{ statusLabel(row.current_status) }}</el-tag>
+            <el-tag
+              v-if="canChangeStatus"
+              :type="statusType(row.current_status)"
+              effect="dark"
+              size="small"
+              class="status-tag-btn"
+              @click="openStatusDialog(row)"
+            >{{ statusLabel(row.current_status) }} ⏏</el-tag>
+            <el-tag v-else :type="statusType(row.current_status)" effect="dark" size="small">{{ statusLabel(row.current_status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="320" fixed="right">
+        <el-table-column label="操作" width="340" fixed="right">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="goDetail(row)">档案</el-button>
-            <el-button size="small" link type="primary" @click="openStatusDialog(row)">切换状态</el-button>
+            <el-button
+              v-if="canChangeStatus"
+              size="small"
+              :type="row.current_status === 'DOWN' ? 'danger' : 'warning'"
+              @click="openStatusDialog(row)"
+            >切换状态</el-button>
             <el-button size="small" link type="primary" @click="openDialog(row)">编辑</el-button>
             <el-button v-if="canDelete" size="small" link type="danger" @click="onDelete(row)">删除</el-button>
           </template>
@@ -102,7 +115,7 @@
     </el-dialog>
 
     <!-- 状态切换 -->
-    <el-dialog v-model="statusDialogVisible" :title="`切换状态：${targetEquipment?.name || ''}`" width="520px">
+    <el-dialog v-model="statusDialogVisible" :title="`切换状态：${targetEquipment?.name || ''}`" width="560px">
       <el-form :model="statusForm" :rules="statusRules" ref="statusFormRef" label-width="90px">
         <el-form-item label="目标状态" prop="to_status">
           <el-select v-model="statusForm.to_status" style="width:100%">
@@ -133,6 +146,32 @@
             :placeholder="statusForm.to_status === 'OTHER' ? '必填：请说明具体状态/原因' : ''"
           />
         </el-form-item>
+
+        <!-- 切 DOWN 时必填：故障现象 + 紧急度，自动派 REPAIR 工单 -->
+        <template v-if="statusForm.to_status === 'DOWN'">
+          <el-form-item label="紧急度" prop="urgency" required>
+            <el-radio-group v-model="statusForm.urgency">
+              <el-radio-button label="LOW">低</el-radio-button>
+              <el-radio-button label="NORMAL">普通</el-radio-button>
+              <el-radio-button label="HIGH">高</el-radio-button>
+              <el-radio-button label="CRITICAL">紧急</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="故障现象" prop="fault_phenomenon" required>
+            <el-input
+              v-model="statusForm.fault_phenomenon"
+              type="textarea"
+              :rows="3"
+              placeholder="必填：请详细描述故障现象（如异响、报警代码、无法启动等），提交后将自动派发故障维修工单"
+              maxlength="500"
+              show-word-limit
+            />
+          </el-form-item>
+          <div style="margin:-6px 0 10px 90px;color:#909399;font-size:12px;">
+            ⚠ 切换为 DOWN 后，系统将自动创建 1 条【故障维修】工单并关联本次状态记录。
+          </div>
+        </template>
+
         <el-form-item label="备注">
           <el-input v-model="statusForm.remark" type="textarea" :rows="1" />
         </el-form-item>
@@ -163,6 +202,7 @@ const userStore = useUserStore()
 const router = useRouter()
 const canWrite = computed(() => userStore.can('equipment.write'))
 const canDelete = computed(() => userStore.can('equipment.delete'))
+const canChangeStatus = computed(() => userStore.can('equipment.change_status'))
 
 function goDetail(row) {
   router.push({ name: 'EquipmentDetail', params: { id: row.id } })
@@ -248,12 +288,26 @@ async function onDelete(row) {
 const statusDialogVisible = ref(false)
 const targetEquipment = ref(null)
 const statusFormRef = ref(null)
-const statusForm = reactive({ to_status: '', reason_code: '', reason_detail: '', remark: '' })
+const statusForm = reactive({
+  to_status: '', reason_code: '', reason_detail: '', remark: '',
+  urgency: 'NORMAL', fault_phenomenon: '',
+})
 const statusRules = computed(() => ({
   to_status: [{ required: true, message: '请选择目标状态', trigger: 'change' }],
   reason_detail:
     statusForm.to_status === 'OTHER'
       ? [{ required: true, message: '切换到"其他"状态时必须填写详细原因', trigger: 'blur' }]
+      : [],
+  urgency:
+    statusForm.to_status === 'DOWN'
+      ? [{ required: true, message: '请选择紧急度', trigger: 'change' }]
+      : [],
+  fault_phenomenon:
+    statusForm.to_status === 'DOWN'
+      ? [
+          { required: true, message: '请描述故障现象', trigger: 'blur' },
+          { min: 2, message: '至少 2 个字符', trigger: 'blur' },
+        ]
       : [],
 }))
 function openStatusDialog(row) {
@@ -261,6 +315,7 @@ function openStatusDialog(row) {
   Object.assign(statusForm, {
     to_status: row.current_status === 'RUN' ? 'IDLE' : 'RUN',
     reason_code: '', reason_detail: '', remark: '',
+    urgency: 'NORMAL', fault_phenomenon: '',
   })
   statusDialogVisible.value = true
 }
@@ -282,4 +337,6 @@ onMounted(load)
 
 <style scoped>
 .toolbar { margin-bottom: 10px; }
+.status-tag-btn { cursor: pointer; transition: opacity .2s, transform .15s; }
+.status-tag-btn:hover { opacity: .85; transform: scale(1.05); }
 </style>

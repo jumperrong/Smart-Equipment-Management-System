@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -95,6 +95,14 @@ def change_status(
     obj_in: StatusLogCreate,
     operator: User,
 ) -> EquipmentStatusLog:
+    """切换设备状态。当 to_status == DOWN 时：
+    1) fault_phenomenon 必填（故障现象）
+    2) 自动创建 1 条 REPAIR 工单，关联 status_log_id
+    """
+    from app.models import WorkOrderType
+    from app.schemas import WorkOrderCreate
+    from app.services import work_order_service as _wo_svc
+
     eq = get_equipment(db, equipment_id)
     if not eq:
         raise HTTPException(status_code=404, detail="设备不存在")
@@ -106,6 +114,22 @@ def change_status(
             status_code=400,
             detail="切换到'其他(OTHER)'状态时必须填写详细原因",
         )
+    # 切到 DOWN 时必须填写故障现象
+    if obj_in.to_status == EquipmentStatus.DOWN:
+        phenom = (obj_in.fault_phenomenon or "").strip() or (obj_in.reason_detail or "").strip()
+        if not phenom:
+            raise HTTPException(
+                status_code=400,
+                detail="切换到 DOWN(宕机) 时必须填写故障现象(fault_phenomenon)",
+            )
+        # 紧急度必须在合法范围内
+        urgency = (obj_in.urgency or "NORMAL").upper()
+        if urgency not in ("LOW", "NORMAL", "HIGH", "CRITICAL"):
+            urgency = "NORMAL"
+    else:
+        phenom = ""
+        urgency = "NORMAL"
+
     old_status = eq.current_status
     start = obj_in.start_time or datetime.utcnow()
 
@@ -124,6 +148,39 @@ def change_status(
     db.add(log)
     eq.current_status = obj_in.to_status
     eq.updated_at = datetime.utcnow()
+    db.flush()  # 拿 log.id
+
+    # 切 DOWN → 自动派发 REPAIR 工单
+    if obj_in.to_status == EquipmentStatus.DOWN:
+        # 避免同一个 open 的 DOWN 重复派单（同一台设备如有未完成的 DOWN 工单则不重复派）
+        existing = (
+            db.query(_wo_svc.WorkOrder)
+            if False else None
+        )
+        # 简单判断：该设备有无 CREATED/ASSIGNED/IN_PROGRESS/PENDING_REVIEW 且关联同一次 status_log_id/类型为 REPAIR 的工单
+        from app.models import WorkOrder as _WO, WorkOrderStatus as _WOS
+        _active_types = (_WOS.CREATED, _WOS.ASSIGNED, _WOS.IN_PROGRESS, _WOS.PENDING_REVIEW)
+        dup = (
+            db.query(_WO)
+            .filter(_WO.equipment_id == equipment_id)
+            .filter(_WO.type == WorkOrderType.REPAIR)
+            .filter(_WO.status.in_(_active_types))
+            .filter((_WO.status_log_id == log.id) | (_WO.status_log_id.is_(None)))
+            .first()
+        )
+        if not dup:
+            _title = phenom[:50] if len(phenom) <= 50 else phenom[:50]
+            wo_in = WorkOrderCreate(
+                type=WorkOrderType.REPAIR,
+                equipment_id=equipment_id,
+                title=f"设备故障: {_title}",
+                description=phenom,
+                urgency=urgency,
+                assignee_id=None,
+            )
+            # 手工构造，复用 create_work_order 的逻辑但不传 creator 不对（要传）
+            _wo_svc.create_work_order(db, wo_in, operator, status_log_id=log.id)
+
     db.commit()
     db.refresh(log)
     return log

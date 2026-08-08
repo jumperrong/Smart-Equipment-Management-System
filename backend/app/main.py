@@ -3,6 +3,7 @@ import os
 import sys
 import pathlib
 import time
+import secrets
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +24,60 @@ from app.services.permission_service import seed_default_permissions
 from app.services.system_setting_service import seed_default_settings
 from app.services.restart_service import is_recently_restarted, clear_restart_marker
 from app.services import backup_scheduler
+
+
+# ---------- 启动时安全检查 ----------
+def _boot_security_checks():
+    """启动时安全检查 + 必要的一次性修复：
+    1) 若使用默认 SECRET_KEY → 生成安全随机值写入 .env，并警告退出（避免生产误用）。
+    2) 告警：管理员仍使用默认弱密码 admin123 的提示（实际改密在首次登录）。
+    """
+    if settings.is_default_secret_key:
+        print("\n" + "=" * 70)
+        print("[SECURITY WARN] 检测到默认 SECRET_KEY，正在生成安全随机密钥并写入 .env ...")
+        new_key = secrets.token_urlsafe(48)
+        env_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+        env_path = os.path.abspath(env_path)
+        try:
+            existing = ""
+            if os.path.isfile(env_path):
+                with open(env_path, "r", encoding="utf-8") as f:
+                    existing = f.read()
+            lines = existing.splitlines()
+            replaced = False
+            new_lines = []
+            for line in lines:
+                s = line.strip()
+                if s.startswith("SECRET_KEY=") or s.startswith("SECRET_KEY "):
+                    new_lines.append(f"SECRET_KEY={new_key}")
+                    replaced = True
+                else:
+                    new_lines.append(line)
+            if not replaced:
+                new_lines.append(f"SECRET_KEY={new_key}")
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(new_lines) + "\n")
+            print(f"[SECURITY OK] 已将新的 SECRET_KEY 写入 {env_path}")
+            print("[SECURITY NOTE] 请重启服务以加载新的 SECRET_KEY（旧会话/令牌将失效，需重新登录）。")
+        except Exception as e:
+            print(f"[SECURITY ERROR] 写入 .env 失败：{e}")
+            print(
+                "[SECURITY ERROR] 请手动在 .env 中添加 SECRET_KEY=<强随机字符串>，"
+                "并禁止使用默认值，否则所有令牌可能被伪造！"
+            )
+        print("=" * 70 + "\n")
+
+    # CORS 仍含通配符的告警（本应不会，但防御性检查）
+    origins = settings.BACKEND_CORS_ORIGINS
+    if not origins or "*" in origins:
+        print("[SECURITY WARN] BACKEND_CORS_ORIGINS 为空或包含 *，局域网环境建议配置实际来源地址。")
+    print(
+        f"[SECURITY] CORS 白名单 = {origins or []}；"
+        f"access_token={settings.ACCESS_TOKEN_EXPIRE_MINUTES}min；"
+        f"refresh_token={settings.REFRESH_TOKEN_EXPIRE_DAYS}d；"
+        f"登录失败锁定阈值={settings.LOGIN_FAILURE_LOCK_THRESHOLD}次/"
+        f"{settings.LOGIN_FAILURE_LOCK_MINUTES}min；密码最小长度={settings.PASSWORD_MIN_LENGTH}"
+    )
 
 
 def _get_frontend_dist() -> str | None:
@@ -114,6 +169,7 @@ def _seed_ip_whitelist_defaults(db) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _boot_security_checks()
     init_db()
     backup_scheduler.start_scheduler()
     yield
@@ -206,13 +262,32 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.BACKEND_CORS_ORIGINS + ["*"],
+        allow_origins=settings.BACKEND_CORS_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        max_age=600,
     )
     # IP 白名单过滤中间件（CORS 之后、路由之前）
     app.add_middleware(IPFilterMiddleware)
+
+    # 安全响应头中间件（X-Content-Type-Options/X-Frame-Options/CSP 等）
+    class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            response = await call_next(request)
+            response.headers.setdefault("X-Content-Type-Options", "nosniff")
+            response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+            response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+            response.headers.setdefault(
+                "Content-Security-Policy",
+                "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
+                "script-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ws: wss:;"
+                "frame-ancestors 'self'; base-uri 'self'; form-action 'self'",
+            )
+            response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+            return response
+
+    app.add_middleware(SecurityHeadersMiddleware)
     app.include_router(api_router, prefix=settings.API_V1_STR)
 
     @app.get("/health")

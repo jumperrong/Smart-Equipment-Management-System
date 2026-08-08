@@ -14,9 +14,29 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
+class TokenPair(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    # 安全提示：true = 使用默认/弱密码或首次登录，要求跳修改密码
+    must_change_password: bool = False
+    # 账户是否临时锁定
+    locked: bool = False
+    lock_remaining_minutes: int = 0
+
+
+class RefreshTokenIn(BaseModel):
+    refresh_token: str
+
+
 class LoginPayload(BaseModel):
     username: str
     password: str
+
+
+class ChangePasswordIn(BaseModel):
+    old_password: str
+    new_password: str = Field(..., min_length=8)
 
 
 class UserBase(BaseModel):
@@ -27,18 +47,25 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str = Field(..., min_length=3)
+    password: str = Field(..., min_length=8)
+    must_change_password: bool = False
 
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     role: Optional[UserRole] = None
     is_active: Optional[bool] = None
-    password: Optional[str] = Field(None, min_length=3)
+    password: Optional[str] = Field(None, min_length=8)
+    must_change_password: Optional[bool] = None
+    locked_until: Optional[datetime] = None
 
 
 class UserOut(UserBase):
     id: int
+    must_change_password: bool = False
+    locked_until: Optional[datetime] = None
+    failed_login_count: int = 0
+    last_password_changed_at: Optional[datetime] = None
     created_at: datetime
 
     class Config:
@@ -99,6 +126,9 @@ class StatusLogBase(BaseModel):
     reason_code: Optional[str] = Field(None, max_length=64)
     reason_detail: Optional[str] = Field(None, max_length=255)
     remark: Optional[str] = Field(None, max_length=255)
+    # 当切到 DOWN 时用于自动派发 REPAIR 工单
+    urgency: Optional[str] = Field("NORMAL", max_length=16, description="紧急度 LOW/NORMAL/HIGH/CRITICAL")
+    fault_phenomenon: Optional[str] = Field(None, max_length=500, description="故障现象(切DOWN时必填,自动创工单标题/描述)")
 
 
 class StatusLogCreate(StatusLogBase):
@@ -427,7 +457,7 @@ class WorkOrderCreate(BaseModel):
     title: str = Field(..., max_length=255)
     description: Optional[str] = None
     assignee_id: Optional[int] = None
-    source_report_id: Optional[int] = None
+    urgency: str = "NORMAL"
     pm_plan_id: Optional[int] = None
     planned_start: Optional[datetime] = None
     planned_end: Optional[datetime] = None
@@ -439,6 +469,7 @@ class WorkOrderUpdate(BaseModel):
     assignee_id: Optional[int] = None
     title: Optional[str] = None
     description: Optional[str] = None
+    urgency: Optional[str] = None
     planned_start: Optional[datetime] = None
     planned_end: Optional[datetime] = None
     actual_start: Optional[datetime] = None
@@ -463,7 +494,7 @@ class WorkOrderOut(BaseModel):
     title: str
     description: Optional[str] = None
     assignee_id: Optional[int] = None
-    source_report_id: Optional[int] = None
+    urgency: str = "NORMAL"
     pm_plan_id: Optional[int] = None
     status_log_id: Optional[int] = None
     fault_category: Optional[FaultCategory] = None
@@ -480,6 +511,9 @@ class WorkOrderOut(BaseModel):
     updated_at: datetime
     five_whys: List[FiveWhyOut] = []
     spare_usages: List[SparePartUsageOut] = []
+    # 工单持续时长（计算字段，前端展示用）
+    duration_text: Optional[str] = None
+    duration_hours: Optional[float] = None
 
     class Config:
         from_attributes = True

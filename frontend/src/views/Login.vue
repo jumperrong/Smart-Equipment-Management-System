@@ -42,8 +42,13 @@ async function onLogin() {
   try {
     await formRef.value.validate()
     loading.value = true
-    await userStore.doLogin({ username: form.username, password: form.password })
+    const resp = await userStore.doLogin({ username: form.username, password: form.password })
     ElMessage.success(`欢迎，${userStore.fullName}`)
+    // 若后端标记必须改密（首次登录/弱密码）→ 跳强制改密页
+    if (resp?.must_change_password || userStore.must_change_password) {
+      router.replace({ name: 'ChangePassword' })
+      return
+    }
     const redirect = route.query.redirect || '/'
     router.replace(redirect)
   } catch (e) {

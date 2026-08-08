@@ -5,12 +5,12 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models import (
-    WorkOrder, WorkOrderType, WorkOrderStatus, FiveWhy, RepairReport,
+    WorkOrder, WorkOrderType, WorkOrderStatus, FiveWhy,
     PMPlan, Equipment, EquipmentStatus, User, SparePartUsage,
 )
 from app.schemas import (
     WorkOrderCreate, WorkOrderUpdate, FaultAnalysisIn, FiveWhyIn,
-    RepairReportCreate, PMPlanCreate, PMPlanUpdate, SparePartUsageIn,
+    PMPlanCreate, PMPlanUpdate, SparePartUsageIn,
 )
 from app.services import spare_part_service
 
@@ -46,7 +46,8 @@ def list_work_orders(
     return q.order_by(WorkOrder.id.desc()).offset(skip).limit(limit).all()
 
 
-def create_work_order(db: Session, obj_in: WorkOrderCreate, creator: User) -> WorkOrder:
+def create_work_order(db: Session, obj_in: WorkOrderCreate, creator: User,
+                      status_log_id: Optional[int] = None) -> WorkOrder:
     eq = db.query(Equipment).filter(Equipment.id == obj_in.equipment_id).first()
     if not eq:
         raise HTTPException(status_code=404, detail="设备不存在")
@@ -59,21 +60,15 @@ def create_work_order(db: Session, obj_in: WorkOrderCreate, creator: User) -> Wo
         title=obj_in.title,
         description=obj_in.description,
         assignee_id=obj_in.assignee_id,
-        source_report_id=obj_in.source_report_id,
         pm_plan_id=obj_in.pm_plan_id,
+        status_log_id=status_log_id,
+        urgency=(obj_in.urgency or "NORMAL").upper() if obj_in.urgency else "NORMAL",
         planned_start=obj_in.planned_start,
         planned_end=obj_in.planned_end,
         remark=obj_in.remark,
     )
     db.add(wo)
     db.flush()
-
-    # 来源报修单 → 标记已转单
-    if obj_in.source_report_id:
-        rpt = db.query(RepairReport).filter(RepairReport.id == obj_in.source_report_id).first()
-        if rpt:
-            rpt.work_order_id = wo.id
-            rpt.status = "CONVERTED"
 
     # 来源 PM 计划 → 更新上次执行/下次到期
     if obj_in.pm_plan_id:
@@ -159,58 +154,6 @@ def list_spare_usages(db: Session, wo_id: int):
         .filter(SparePartUsage.work_order_id == wo_id)
         .all()
     )
-
-
-# ----- 报修单 -----
-
-def list_reports(db: Session, equipment_id: Optional[int] = None, status: Optional[str] = None,
-                 skip: int = 0, limit: int = 100):
-    q = db.query(RepairReport)
-    if equipment_id:
-        q = q.filter(RepairReport.equipment_id == equipment_id)
-    if status:
-        q = q.filter(RepairReport.status == status)
-    return q.order_by(RepairReport.id.desc()).offset(skip).limit(limit).all()
-
-
-def get_report(db: Session, report_id: int) -> Optional[RepairReport]:
-    return db.query(RepairReport).filter(RepairReport.id == report_id).first()
-
-
-def create_report(db: Session, obj_in: RepairReportCreate, reporter: User) -> RepairReport:
-    eq = db.query(Equipment).filter(Equipment.id == obj_in.equipment_id).first()
-    if not eq:
-        raise HTTPException(status_code=404, detail="设备不存在")
-    rpt = RepairReport(
-        equipment_id=obj_in.equipment_id,
-        reporter_id=reporter.id,
-        phenomenon=obj_in.phenomenon,
-        urgency=obj_in.urgency,
-    )
-    db.add(rpt)
-    db.commit()
-    db.refresh(rpt)
-    return rpt
-
-
-def convert_report_to_work_order(db: Session, report_id: int, creator: User) -> WorkOrder:
-    rpt = get_report(db, report_id)
-    if not rpt:
-        raise HTTPException(status_code=404, detail="报修单不存在")
-    if rpt.status == "CONVERTED":
-        raise HTTPException(status_code=400, detail="该报修单已转单")
-    wo = create_work_order(
-        db,
-        WorkOrderCreate(
-            type=WorkOrderType.REPAIR,
-            equipment_id=rpt.equipment_id,
-            title=f"报修转单: {rpt.phenomenon[:50]}",
-            description=rpt.phenomenon,
-            source_report_id=rpt.id,
-        ),
-        creator,
-    )
-    return wo
 
 
 # ----- PM 计划 -----
