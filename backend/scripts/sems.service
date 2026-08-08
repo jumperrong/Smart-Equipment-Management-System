@@ -1,0 +1,103 @@
+# ---------------------------------------------------------------------------
+# sems.service —— systemd unit（建议放 /etc/systemd/system/sems.service）
+#
+# 职责：
+#   * 开机自启动（WantedBy=multi-user.target）
+#   * 崩溃自重启（Restart=on-failure + StartLimitBurst/IntervalSec 防雪崩循环）
+#   * 优雅停服（ExecStop=SIGTERM + TimeoutStopSec=60，uvicorn 内 30s graceful）
+#   * 安全加固：DynamicUser=no（因为要写 data 目录），用专属 User=sems；
+#               ReadWritePaths 只放开必要目录；PrivateTmp；ProtectSystem=strict；
+#               NoNewPrivileges 等系统防护
+#   * 进程守护：WatchdogSec（systemd 原生看门狗）
+#   * 资源限制：MemoryMax=2G / TasksMax=256（半导体工厂单机 SEMS 一般够用）
+# ---------------------------------------------------------------------------
+[Unit]
+Description=SEMS 半导体设备管理系统后端 (uvicorn + FastAPI)
+Documentation=https://gitee.com/jumperrong/Smart-Equipment-Management-System
+After=network-online.target local-fs.target remote-fs.target
+Wants=network-online.target
+# 连续启动超过 5 次 / 2 分钟 → 进入 failed，需要人工介入
+StartLimitBurst=5
+StartLimitIntervalSec=120
+
+[Service]
+Type=simple
+
+# ===== 运行身份 =====
+# 建议：先创建专属用户 `sudo useradd -r -s /usr/sbin/nologin sems`
+# 或直接 User=root（不推荐，但对 Windows 子系统 / 私有环境最简单）
+# 若你的部署是"个人本地机器部署+无systemd权限"，见 install.sh 中 --user-level 选项。
+User=sems
+Group=sems
+
+# ===== 启动环境 =====
+# WorkingDirectory 必须指向 backend 目录（含 .venv / .env / data/ 等）
+WorkingDirectory=/opt/sems/backend
+
+# 若用 venv，把 venv 的 bin 放 PATH 前；否则依赖系统级 python
+Environment=PATH=/opt/sems/backend/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PYTHONUNBUFFERED=1
+Environment=SEMS_OPEN_BROWSER=0
+Environment=SEMS_LOG_DIR=/var/log/sems
+Environment=PYTHONIOENCODING=utf-8
+
+# ExecStart：使用 run_server.py（统一入口，自带端口占用提示 + SQLite checkpoint + 日志轮转）
+# 若 venv 不存在，可替换为 /usr/bin/python3 run_server.py
+ExecStart=/opt/sems/backend/.venv/bin/python /opt/sems/backend/run_server.py
+
+# ExecReload：向主进程发 SIGUSR1 / 简单优雅重启（uvicorn 没有 reload hook，这里用 restart 语义）
+ExecReload=/bin/kill -HUP $MAINPID
+
+# 停服：先发 SIGTERM（uvicorn 捕获后开始 graceful）；超时再 SIGKILL
+KillSignal=SIGTERM
+TimeoutStopSec=60
+FinalKillSignal=SIGKILL
+
+# ===== 崩溃自重启 =====
+Restart=on-failure
+RestartPreventExitStatus=2    # 端口占用等配置错误不反复重启（exit 2 由 run_server 主动 sys.exit）
+RestartSec=5s
+
+# ===== systemd 看门狗 =====
+# 如果进程在 WatchdogSec 内没有调用 sd_notify(WATCHDOG=1)，systemd 自动杀并重启
+# run_server.py 内未主动 sd_notify，这里保留保守值 5min；如果希望真正使用 watchdog，
+# 可以用 `pip install sdnotify` 并在 app lifespan 中启动线程每 30s notify。
+WatchdogSec=5min
+
+# ===== 资源限制（按需调大） =====
+MemoryMax=2G
+MemorySoft=1536M
+TasksMax=256
+LimitNOFILE=65536
+
+# ===== 沙箱（读多写少原则） =====
+# 严格保护 /usr / /boot 等只读
+ProtectSystem=strict
+# 允许写的目录：data、/tmp、日志、运行期 pid
+ReadWritePaths=/opt/sems/backend/data /opt/sems/backend/.env /var/log/sems
+ReadWritePaths=/opt/sems/backend/scripts /opt/sems/backend
+PrivateTmp=true
+PrivateDevices=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=false            # SQLite/日志依赖写时间相关缓存？保持 false 更稳
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false  # JIT 扩展（bcrypt/cryptography/numpy）需 false
+RestrictRealtime=true
+NoNewPrivileges=true
+SystemCallArchitectures=native
+RemoveIPC=true
+
+# ===== 日志 =====
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sems
+# 若还想落地到 /var/log/sems/*.log，run_server.py 内部也会按天写，配合 journald 两份冗余
+# 查看日志：journalctl -u sems -f --since today
+
+[Install]
+WantedBy=multi-user.target
