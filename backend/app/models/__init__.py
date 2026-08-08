@@ -812,12 +812,108 @@ class ProcessDocument(Base):
     batch_no = Column(String(64), nullable=True, index=True, comment="作业记录-批号")
     shift = Column(String(16), nullable=True, comment="作业记录-班次: A/B/C")
     production_date = Column(DateTime, nullable=True, comment="作业记录-生产日期")
-    stored_path = Column(String(512), nullable=False, comment="存储路径")
+    stored_path = Column(String(512), nullable=False, comment="存储路径；结构化表单记录此处为 '' 或特殊占位，实际内容在关联 form_record 中")
     file_size = Column(Integer, nullable=True, comment="字节")
     file_type = Column(String(64), nullable=True, comment="MIME类型")
     description = Column(String(500), nullable=True, comment="说明")
     uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    form_record_id = Column(Integer, ForeignKey("form_records.id", ondelete="SET NULL"), nullable=True, index=True, comment="关联的结构化表单记录(基于模板生成)")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     equipment = relationship("Equipment", back_populates="process_documents")
+    form_record = relationship("FormRecord", back_populates="process_documents")
+
+
+# ============ 模块 L: 用户自定义表单模板与结构化表单记录 ============
+# 场景：工艺记录（批次/参数/检验/交接班）等不再强制要求上传 PDF/Excel，
+# 而是：管理员/工艺员先定义 模板 (字段定义 JSON + 可选参考文件)，
+# 操作员/工艺员选模板 → 动态渲染表单 → 填写 → 保存为结构化记录(可导出/可展示)。
+
+
+class FormTemplate(Base):
+    """表单模板（字段定义 + 可选参考模板文件）。
+
+    一个模板可被多次使用生成多条 FormRecord（填写值）。
+    field_schema 格式（有序 JSON 数组）：
+    [
+      {
+        "key": "bath_no",              // 唯一字段key (建议英文小写+下划线)
+        "type": "text",                // text / textarea / number / select / radio / date / datetime / time / boolean
+        "label": "批号",                // 显示名
+        "required": true,
+        "placeholder": "例 B20260801-01",
+        "default_value": null,
+        "options": [{"label":"A班","value":"A"}], // select/radio 必填
+        "unit": "℃",                    // 可选单位(数字类)
+        "min": null, "max": null,       // 数字范围
+        "seq": 1                        // 显示顺序(升序)
+      }, ...
+    ]
+    """
+    __tablename__ = "form_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False, comment="模板名称")
+    code = Column(String(64), unique=True, index=True, nullable=True, comment="模板编码（可选，便于跨环境迁移匹配）")
+    category = Column(String(16), default="record", nullable=False, comment="record作业记录类 / guide通用表单类")
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=True, index=True, comment="适用机台；NULL=通用模板，可用于任意机台")
+    description = Column(String(500), nullable=True, comment="模板说明")
+    field_schema = Column(JSON, default=list, nullable=False, comment="字段定义 JSON 数组")
+    ref_stored_path = Column(String(512), nullable=True, comment="参考模板（空白PDF/Excel/图片）存储路径")
+    ref_original_name = Column(String(255), nullable=True, comment="参考模板原始文件名")
+    ref_file_size = Column(Integer, nullable=True, comment="参考模板字节")
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    equipment = relationship("Equipment")
+    records = relationship("FormRecord", back_populates="template", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_form_tpl_cat_active", "category", "is_active"),
+    )
+
+
+class FormRecord(Base):
+    """按模板填写生成的结构化表单记录。
+
+    可与 ProcessDocument (category=record) 通过 process_documents.form_record_id 双向关联。
+    """
+    __tablename__ = "form_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, ForeignKey("form_templates.id"), nullable=False, index=True)
+    title = Column(String(255), nullable=False, comment="记录标题（默认为 模板名+批次+日期）")
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=True, index=True)
+    batch_no = Column(String(64), nullable=True, index=True, comment="批号(作业记录类)")
+    shift = Column(String(16), nullable=True, comment="班次: A/B/C")
+    production_date = Column(DateTime, nullable=True, comment="生产日期")
+    status = Column(String(16), default="草稿", nullable=False, index=True, comment="草稿/已提交/已作废")
+    remark = Column(String(500), nullable=True)
+    filled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    submitted_at = Column(DateTime, nullable=True, comment="提交时间")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    template = relationship("FormTemplate", back_populates="records")
+    values = relationship("FormRecordValue", back_populates="record", cascade="all, delete-orphan")
+    process_documents = relationship("ProcessDocument", back_populates="form_record")
+
+
+class FormRecordValue(Base):
+    """表单单字段填写值（JSON 存储，兼容文本/数字/布尔/数组）。"""
+    __tablename__ = "form_record_values"
+
+    id = Column(Integer, primary_key=True, index=True)
+    record_id = Column(Integer, ForeignKey("form_records.id", ondelete="CASCADE"), nullable=False, index=True)
+    field_key = Column(String(64), nullable=False, comment="对应模板 field_schema 中的 key")
+    field_label_snapshot = Column(String(255), nullable=True, comment="快照字段标签(便于模板改动后回看)")
+    field_value = Column(JSON, nullable=True, comment="填写值；任何 JSON 合法类型")
+
+    record = relationship("FormRecord", back_populates="values")
+
+    __table_args__ = (
+        UniqueConstraint("record_id", "field_key", name="uq_form_record_values_record_field"),
+    )

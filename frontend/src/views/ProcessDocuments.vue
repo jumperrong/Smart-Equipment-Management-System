@@ -10,6 +10,9 @@
           <el-checkbox v-model="showAllVersions" @change="load" size="small">
             显示全部版本
           </el-checkbox>
+          <el-button v-if="canWrite && activeCategory === 'record'" type="primary" size="small" @click="openFillByTemplate()">
+            <el-icon><EditPen /></el-icon> 用模板新建（结构化填写）
+          </el-button>
           <el-button v-if="canWrite" type="success" size="small" @click="openUploadDialog()">
             上传{{ activeCategoryLabel }}
           </el-button>
@@ -120,11 +123,21 @@
             <el-tag :type="docStatusTag(row.status)" size="small">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column v-if="activeCategory === 'record'" label="表单来源" width="150">
+          <template #default="{ row }">
+            <el-tag v-if="row.form_record_id" size="small" type="success" effect="plain">结构化填写</el-tag>
+            <el-tag v-else size="small" type="info" effect="plain">附件文件</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column v-if="activeCategory === 'guide'" label="生效日期" width="120">
           <template #default="{ row }">{{ row.effective_date ? formatDate(row.effective_date) : '-' }}</template>
         </el-table-column>
         <el-table-column label="大小" width="90">
-          <template #default="{ row }">{{ formatFileSize(row.file_size) }}</template>
+          <template #default="{ row }">
+            <span v-if="row.file_size != null">{{ formatFileSize(row.file_size) }}</span>
+            <el-tag v-else-if="row.form_record_id" size="small" type="success" effect="plain">结构化</el-tag>
+            <span v-else>-</span>
+          </template>
         </el-table-column>
         <el-table-column label="上传人" width="90">
           <template #default="{ row }">{{ row.uploaded_by ? '#' + row.uploaded_by : '-' }}</template>
@@ -132,11 +145,14 @@
         <el-table-column label="上传时间" width="160">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="360" fixed="right">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="onDownload(row)">下载</el-button>
+            <el-button v-if="row.form_record_id" size="small" link type="success" @click="openViewRecord(row)">查看填写</el-button>
+            <el-button v-if="row.form_record_id" size="small" link type="info" @click="onExportRecord(row, 'json')">导出JSON</el-button>
+            <el-button v-if="row.form_record_id" size="small" link type="warning" @click="onExportRecord(row, 'csv')">导出CSV</el-button>
             <el-button size="small" link type="info" @click="openVersionDialog(row)">版本</el-button>
-            <el-button v-if="canWrite" size="small" link type="success" @click="openNewVersionDialog(row)">新版本</el-button>
+            <el-button v-if="canWrite && !row.form_record_id" size="small" link type="success" @click="openNewVersionDialog(row)">新版本</el-button>
             <el-button v-if="canWrite && row.status === '草稿'" size="small" link type="warning" @click="onPublish(row)">发布</el-button>
             <el-button v-if="canWrite && row.status !== '作废'" size="small" link type="danger" @click="onDeprecate(row)">作废</el-button>
             <el-button v-if="canWrite" size="small" link type="primary" @click="openEditDialog(row)">编辑</el-button>
@@ -145,6 +161,273 @@
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 用模板新建（结构化填写）对话框 -->
+    <el-dialog v-model="fillDialogVisible" title="用模板新建作业记录（结构化填写）" width="960px" top="4vh" destroy-on-close>
+      <el-alert type="info" :closable="false" style="margin-bottom:12px">
+        <template #title>
+          第 1 步先选<b>表单模板</b>（模板由管理员/工艺员在「表单模板管理」页面定义），
+          第 2 步按模板字段填写。<b>保存草稿</b>仅落地；<b>提交</b>后不可修改。
+        </template>
+      </el-alert>
+
+      <!-- Step 1: 选模板 -->
+      <div v-if="!fillForm.template_id">
+        <el-form :inline="true" size="default" @submit.prevent>
+          <el-form-item label="选择机台">
+            <el-select
+              v-model="fillForm.equipment_id"
+              placeholder="选择机台"
+              filterable
+              clearable
+              style="width:240px"
+              @visible-change="onEquipSelectOpen"
+              @change="loadTemplateOptions"
+            >
+              <el-option
+                v-for="e in equipmentOptions"
+                :key="e.id"
+                :label="`${e.name}${e.asset_no ? ' (' + e.asset_no + ')' : ''}`"
+                :value="e.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="分类">
+            <el-select v-model="fillForm.filter_category" placeholder="全部" clearable style="width:140px" @change="loadTemplateOptions">
+              <el-option label="作业记录类" value="record" />
+              <el-option label="通用表单类" value="guide" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="关键字">
+            <el-input v-model="fillForm.keyword" placeholder="模板名称/编码" clearable style="width:220px" @keyup.enter="loadTemplateOptions" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="loadTemplateOptions">刷新模板</el-button>
+          </el-form-item>
+        </el-form>
+        <el-table :data="templateOptions" border stripe size="small" max-height="440" empty-text="暂无可用模板，请先在「表单模板管理」中创建并启用">
+          <el-table-column type="radio" width="50" align="center" />
+          <el-table-column label="名称" min-width="200">
+            <template #default="{ row }"><b>{{ row.name }}</b></template>
+          </el-table-column>
+          <el-table-column label="编码" width="180">
+            <template #default="{ row }">{{ row.code || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="分类" width="110">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.category === 'record' ? 'primary' : 'info'">
+                {{ row.category === 'record' ? '作业记录类' : '通用表单' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="适用机台" min-width="160">
+            <template #default="{ row }">
+              <span v-if="eqNameLocal(row.equipment_id)">{{ eqNameLocal(row.equipment_id) }}</span>
+              <el-tag v-else size="small" type="success">通用</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="字段数" width="80" align="center">
+            <template #default="{ row }">{{ (row.field_schema || []).length }}</template>
+          </el-table-column>
+          <el-table-column label="参考" width="100" align="center">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.has_ref_file"
+                size="small"
+                link
+                type="primary"
+                @click.stop="onDownloadTplRef(row)"
+              >下载参考</el-button>
+              <span v-else style="color:#c0c4cc">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="110" align="center">
+            <template #default="{ row }">
+              <el-button size="small" type="primary" @click="pickTemplate(row)">选择</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+
+      <!-- Step 2: 填写表单 -->
+      <div v-else>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div>
+            <el-tag type="success" size="small">模板：{{ fillForm._template.name }}</el-tag>
+            <el-tag v-if="fillForm._template.code" size="small" style="margin-left:4px">{{ fillForm._template.code }}</el-tag>
+            <el-button size="small" link @click="clearTemplate" style="margin-left:8px">← 重选模板</el-button>
+          </div>
+          <el-button v-if="fillForm._template.has_ref_file" size="small" type="info" plain @click="onDownloadTplRef(fillForm._template)">
+            <el-icon><Download /></el-icon> 下载参考模板对照
+          </el-button>
+        </div>
+
+        <el-form :model="fillForm.meta" label-width="100px" style="background:#f8f9fb;padding:14px;border-radius:6px;margin-bottom:12px">
+          <el-row :gutter="16">
+            <el-col :span="8">
+              <el-form-item label="关联机台">
+                <el-select v-model="fillForm.meta.equipment_id" filterable required style="width:100%" @visible-change="onEquipSelectOpen">
+                  <el-option
+                    v-for="e in equipmentOptions"
+                    :key="e.id"
+                    :label="`${e.name}${e.asset_no ? ' (' + e.asset_no + ')' : ''}`"
+                    :value="e.id"
+                  />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="批次号"><el-input v-model="fillForm.meta.batch_no" placeholder="例：B20260807-01" /></el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="班次">
+                <el-select v-model="fillForm.meta.shift" placeholder="选择班次" clearable style="width:100%">
+                  <el-option label="A 班" value="A" /><el-option label="B 班" value="B" /><el-option label="C 班" value="C" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="生产日期">
+                <el-date-picker v-model="fillForm.meta.production_date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="16">
+              <el-form-item label="记录标题">
+                <el-input v-model="fillForm.title" placeholder="留空将自动生成：【模板名】-机台-日期/批次" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="24">
+              <el-form-item label="备注">
+                <el-input v-model="fillForm.remark" type="textarea" :rows="2" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </el-form>
+
+        <el-divider content-position="left"><span style="font-weight:600">填写字段</span></el-divider>
+        <el-form :model="fillForm.values" label-width="140px" size="default">
+          <template v-for="f in fillForm._template.field_schema" :key="f.key">
+            <el-form-item
+              :label="(f.required ? '* ' : '') + f.label + (f.unit ? ` (${f.unit})` : '')"
+              :prop="f.key"
+            >
+              <el-input
+                v-if="f.type === 'text'"
+                v-model="fillForm.values[f.key]"
+                :placeholder="f.placeholder || `请输入${f.label}`"
+                style="width:60%"
+              />
+              <el-input
+                v-else-if="f.type === 'textarea'"
+                v-model="fillForm.values[f.key]"
+                type="textarea"
+                :rows="3"
+                :placeholder="f.placeholder || `请输入${f.label}`"
+                style="width:60%"
+              />
+              <el-input-number
+                v-else-if="f.type === 'number'"
+                v-model="fillForm.values[f.key]"
+                :min="f.min !== null ? f.min : undefined"
+                :max="f.max !== null ? f.max : undefined"
+                controls-position="right"
+                style="width:240px"
+              />
+              <el-select
+                v-else-if="f.type === 'select'"
+                v-model="fillForm.values[f.key]"
+                :placeholder="f.placeholder || `请选择${f.label}`"
+                clearable
+                style="width:300px"
+              >
+                <el-option v-for="o in f.options" :key="o.value" :label="o.label" :value="o.value" />
+              </el-select>
+              <el-radio-group v-else-if="f.type === 'radio'" v-model="fillForm.values[f.key]">
+                <el-radio v-for="o in f.options" :key="o.value" :label="o.value">{{ o.label }}</el-radio>
+              </el-radio-group>
+              <el-date-picker
+                v-else-if="f.type === 'date'"
+                v-model="fillForm.values[f.key]"
+                type="date"
+                value-format="YYYY-MM-DD"
+                :placeholder="f.placeholder || `请选择${f.label}`"
+                style="width:240px"
+              />
+              <el-date-picker
+                v-else-if="f.type === 'datetime'"
+                v-model="fillForm.values[f.key]"
+                type="datetime"
+                value-format="YYYY-MM-DD HH:mm:ss"
+                :placeholder="f.placeholder || `请选择${f.label}`"
+                style="width:260px"
+              />
+              <el-time-picker
+                v-else-if="f.type === 'time'"
+                v-model="fillForm.values[f.key]"
+                value-format="HH:mm:ss"
+                :placeholder="f.placeholder || `请选择${f.label}`"
+                style="width:220px"
+              />
+              <el-switch v-else-if="f.type === 'boolean'" v-model="fillForm.values[f.key]" active-text="是" inactive-text="否" />
+              <span v-else style="color:#909399">未知字段类型：{{ f.type }}</span>
+            </el-form-item>
+          </template>
+        </el-form>
+      </div>
+
+      <template #footer>
+        <el-button @click="fillDialogVisible = false">取消</el-button>
+        <template v-if="fillForm.template_id">
+          <el-button :loading="fillSubmitting" @click="submitFill(false)">保存草稿</el-button>
+          <el-button :loading="fillSubmitting" type="primary" @click="submitFill(true)">提交（不可修改）</el-button>
+        </template>
+      </template>
+    </el-dialog>
+
+    <!-- 查看结构化填写值 对话框 -->
+    <el-dialog v-model="viewRecordVisible" title="结构化填写详情" width="760px" top="6vh" destroy-on-close>
+      <div v-if="viewRecord">
+        <div class="view-header">
+          <span><b>{{ viewRecord.title }}</b></span>
+          <el-tag size="small" style="margin-left:8px">模板：{{ viewRecord.template_name }}</el-tag>
+          <el-tag :type="recordStatusTag(viewRecord.status)" size="small" style="margin-left:4px">{{ viewRecord.status }}</el-tag>
+        </div>
+        <el-descriptions :column="2" border size="small" style="margin-top:10px">
+          <el-descriptions-item label="ID">{{ viewRecord.id }}</el-descriptions-item>
+          <el-descriptions-item label="设备">{{ viewRecord.equipment_name || (viewRecord.equipment_id ? '#' + viewRecord.equipment_id : '-') }}</el-descriptions-item>
+          <el-descriptions-item label="批次号">{{ viewRecord.batch_no || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="班次">{{ viewRecord.shift || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="生产日期">{{ viewRecord.production_date || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="创建人">{{ viewRecord.created_by ? '#' + viewRecord.created_by : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ formatTime(viewRecord.created_at) }}</el-descriptions-item>
+          <el-descriptions-item label="提交时间">{{ viewRecord.submitted_at ? formatTime(viewRecord.submitted_at) : '-' }}</el-descriptions-item>
+        </el-descriptions>
+        <el-divider content-position="left"><span style="font-weight:600">字段填写值</span></el-divider>
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item
+            v-for="v in viewRecord.values"
+            :key="v.field_key"
+            :label="`${v.field_label_snapshot || v.field_key}`"
+          >
+            <template v-if="v.field_value === null || v.field_value === undefined || v.field_value === ''">
+              <span style="color:#c0c4cc">(空)</span>
+            </template>
+            <template v-else-if="typeof v.field_value === 'boolean'">
+              <el-tag :type="v.field_value ? 'success' : 'info'" size="small">{{ v.field_value ? '是' : '否' }}</el-tag>
+            </template>
+            <template v-else>{{ formatScalar(v.field_value) }}</template>
+          </el-descriptions-item>
+        </el-descriptions>
+        <el-alert v-if="viewRecord.remark" type="info" :closable="false" style="margin-top:10px">
+          <template #title><b>备注：</b>{{ viewRecord.remark }}</template>
+        </el-alert>
+      </div>
+      <template #footer>
+        <el-button @click="onExportRecord({form_record_id:viewRecord?.id}, 'json')">导出JSON</el-button>
+        <el-button type="primary" @click="onExportRecord({form_record_id:viewRecord?.id}, 'csv')">导出CSV</el-button>
+        <el-button @click="viewRecordVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 上传对话框 -->
     <el-dialog v-model="uploadDialogVisible" :title="`上传${activeCategoryLabel}`" width="560px">
@@ -440,6 +723,7 @@
 <script setup>
 import { reactive, ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { EditPen, Download } from '@element-plus/icons-vue'
 import {
   listProcessDocuments,
   uploadProcessDocument,
@@ -452,6 +736,13 @@ import {
   replaceFile,
 } from '@/api/process_document'
 import { listEquipments } from '@/api/equipment'
+import {
+  listFormTemplates,
+  createFormRecord,
+  getFormRecord,
+  exportFormRecord,
+  downloadTemplateRefFile,
+} from '@/api/form_template'
 import { useUserStore } from '@/stores'
 import { formatTime } from '@/utils'
 
@@ -790,6 +1081,168 @@ function formatFileSize(bytes) {
 function formatDate(t) {
   return t ? formatTime(t, 'YYYY-MM-DD') : '-'
 }
+function formatScalar(v) {
+  if (v === null || v === undefined) return ''
+  if (typeof v === 'object') return JSON.stringify(v, null, 2)
+  return String(v)
+}
+const recordStatusTag = (s) => ({
+  草稿: 'info', 已提交: 'success', 已作废: 'danger',
+}[s] || 'info')
+
+// ---------- 用模板新建（结构化填写） ----------
+const fillDialogVisible = ref(false)
+const fillSubmitting = ref(false)
+const templateOptions = ref([])
+const eqMapLocal = computed(() => {
+  const m = {}
+  equipmentOptions.value.forEach((e) => { m[e.id] = e.name })
+  return m
+})
+const eqNameLocal = (id) => (id ? eqMapLocal.value[id] || null : null)
+
+function defaultFillForm() {
+  return reactive({
+    template_id: null,
+    _template: null,
+    equipment_id: query.equipment_id || null,
+    filter_category: 'record',
+    keyword: '',
+    title: '',
+    remark: '',
+    meta: {
+      equipment_id: query.equipment_id || null,
+      batch_no: '',
+      shift: '',
+      production_date: '',
+    },
+    values: {},
+  })
+}
+const fillForm = defaultFillForm()
+
+function openFillByTemplate() {
+  Object.assign(fillForm, defaultFillForm())
+  fillForm.equipment_id = query.equipment_id || null
+  fillForm.meta.equipment_id = query.equipment_id || null
+  fillForm.filter_category = 'record'
+  fillDialogVisible.value = true
+  loadTemplateOptions()
+}
+
+async function loadTemplateOptions() {
+  const params = { is_active: true }
+  if (fillForm.filter_category) params.category = fillForm.filter_category
+  if (fillForm.keyword) params.keyword = fillForm.keyword
+  // 若指定了设备：查所有模板，然后在前端保留「匹配该设备」或「通用(未绑定设备)」的模板
+  const all = await listFormTemplates(params)
+  if (fillForm.equipment_id) {
+    templateOptions.value = all.filter((x) => !x.equipment_id || x.equipment_id === fillForm.equipment_id)
+    // 排序：精确匹配的模板优先，通用在后
+    templateOptions.value.sort((a, b) => {
+      const aw = a.equipment_id === fillForm.equipment_id ? 0 : 1
+      const bw = b.equipment_id === fillForm.equipment_id ? 0 : 1
+      return aw - bw
+    })
+  } else {
+    templateOptions.value = all
+  }
+}
+
+function onDownloadTplRef(row) {
+  downloadTemplateRefFile(row.id, row.ref_original_name).catch((e) => {
+    ElMessage.error(e?.message || '下载参考模板失败')
+  })
+}
+
+function pickTemplate(row) {
+  fillForm.template_id = row.id
+  fillForm._template = row
+  // 初始化默认值
+  fillForm.values = {}
+  ;(row.field_schema || []).forEach((f) => {
+    if (f.default_value !== null && f.default_value !== undefined) {
+      fillForm.values[f.key] = f.default_value
+    } else if (f.type === 'boolean') {
+      fillForm.values[f.key] = false
+    } else {
+      fillForm.values[f.key] = null
+    }
+  })
+  // 若模板绑定了具体机台 → 默认填写元数据
+  if (row.equipment_id && !fillForm.meta.equipment_id) {
+    fillForm.meta.equipment_id = row.equipment_id
+  }
+  if (!fillForm.meta.equipment_id && query.equipment_id) {
+    fillForm.meta.equipment_id = query.equipment_id
+  }
+}
+function clearTemplate() {
+  fillForm.template_id = null
+  fillForm._template = null
+  fillForm.values = {}
+}
+
+async function submitFill(doSubmit) {
+  if (!fillForm.template_id) return
+  if (!fillForm.meta.equipment_id) {
+    ElMessage.error('请先填写关联机台')
+    return
+  }
+  const keys = {}
+  ;(fillForm._template.field_schema || []).forEach((f) => { keys[f.key] = f })
+  const valuesArr = Object.keys(fillForm.values)
+    .filter((k) => fillForm.values[k] !== undefined && fillForm.values[k] !== null && fillForm.values[k] !== '')
+    .map((k) => ({ field_key: k, field_value: fillForm.values[k] }))
+  const payload = {
+    template_id: fillForm.template_id,
+    equipment_id: fillForm.meta.equipment_id,
+    title: fillForm.title || null,
+    batch_no: fillForm.meta.batch_no || null,
+    shift: fillForm.meta.shift || null,
+    production_date: fillForm.meta.production_date || null,
+    remark: fillForm.remark || null,
+    values: valuesArr,
+    auto_submit: !!doSubmit,
+    link_process_doc: true,
+  }
+  fillSubmitting.value = true
+  try {
+    const rec = await createFormRecord(payload)
+    if (doSubmit) ElMessage.success(`已提交：#${rec.id} ${rec.title}`)
+    else ElMessage.success(`已保存草稿：#${rec.id} ${rec.title}`)
+    fillDialogVisible.value = false
+    load()
+  } finally {
+    fillSubmitting.value = false
+  }
+}
+
+// ---------- 查看结构化记录 ----------
+const viewRecordVisible = ref(false)
+const viewRecord = ref(null)
+
+async function openViewRecord(row) {
+  if (!row.form_record_id) return
+  viewRecord.value = null
+  viewRecordVisible.value = true
+  try {
+    const r = await getFormRecord(row.form_record_id)
+    // 按 seq 排序 values
+    const seqMap = {}
+    ;(r.field_schema_snapshot || []).forEach((f) => { seqMap[f.key] = f.seq ?? 0 })
+    r.values = (r.values || []).sort((a, b) => (seqMap[a.field_key] ?? 999) - (seqMap[b.field_key] ?? 999))
+    viewRecord.value = r
+  } catch (e) {
+    viewRecordVisible.value = false
+  }
+}
+
+function onExportRecord(row, format = 'csv') {
+  const id = row.form_record_id || row.id
+  if (!id) return
+  exportFormRecord(id, format).catch((e) => ElMessage.error(e?.message || '导出失败'))
+}
 
 onMounted(load)
 </script>
@@ -801,4 +1254,5 @@ onMounted(load)
 .toolbar { margin-bottom: 10px; }
 .upload-tip { font-size: 12px; color: #909399; line-height: 1.4; }
 .version-header { padding: 4px 0; }
+.view-header { padding: 4px 0; line-height: 1.7; }
 </style>

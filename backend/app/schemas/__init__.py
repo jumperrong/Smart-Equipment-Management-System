@@ -1036,10 +1036,12 @@ class ProcessDocumentOut(BaseModel):
     batch_no: Optional[str] = None
     shift: Optional[str] = None
     production_date: Optional[datetime] = None
+    stored_path: Optional[str] = None
     file_size: Optional[int] = None
     file_type: Optional[str] = None
     description: Optional[str] = None
     uploaded_by: Optional[int] = None
+    form_record_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
@@ -1071,3 +1073,109 @@ class ProcessDocumentStatusTransition(BaseModel):
     status: str  # 目标状态：生效 / 作废
     effective_date: Optional[datetime] = None
     remark: Optional[str] = None
+
+
+# ============ 模块 L: 表单模板与结构化表单记录 ============
+
+class FormTemplateFieldDef(BaseModel):
+    """单个字段定义（模板 field_schema 数组元素）。"""
+    key: str = Field(..., max_length=64, description="字段唯一key,英文小写+下划线")
+    type: str = Field(..., description="text / textarea / number / select / radio / date / datetime / time / boolean")
+    label: str = Field(..., max_length=255, description="显示名")
+    required: bool = False
+    placeholder: Optional[str] = Field(None, max_length=255)
+    default_value: Optional[object] = None
+    options: Optional[List[dict]] = Field(None, description="select/radio 的选项 [{label, value}]")
+    unit: Optional[str] = Field(None, max_length=16, description="单位如 ℃/g/min")
+    min: Optional[float] = None
+    max: Optional[float] = None
+    seq: int = Field(0, ge=0, description="显示顺序(升序)")
+
+
+class FormTemplateBase(BaseModel):
+    name: str = Field(..., max_length=255)
+    code: Optional[str] = Field(None, max_length=64)
+    category: str = "record"
+    equipment_id: Optional[int] = None
+    description: Optional[str] = Field(None, max_length=500)
+    field_schema: List[FormTemplateFieldDef] = Field(default_factory=list)
+    is_active: bool = True
+
+
+class FormTemplateCreate(FormTemplateBase):
+    pass
+
+
+class FormTemplateUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=255)
+    code: Optional[str] = Field(None, max_length=64)
+    category: Optional[str] = None
+    equipment_id: Optional[int] = None
+    description: Optional[str] = Field(None, max_length=500)
+    field_schema: Optional[List[FormTemplateFieldDef]] = None
+    is_active: Optional[bool] = None
+
+
+class FormTemplateOut(FormTemplateBase):
+    id: int
+    ref_original_name: Optional[str] = None
+    ref_file_size: Optional[int] = None
+    has_ref_file: bool = False
+    created_by: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class FormRecordKeyValue(BaseModel):
+    """单字段填写值"""
+    field_key: str = Field(..., max_length=64)
+    field_value: Optional[object] = None
+
+
+class FormRecordBase(BaseModel):
+    template_id: int
+    title: Optional[str] = Field(None, max_length=255, description="留空则自动生成: 模板名 + 批次/日期")
+    equipment_id: Optional[int] = None
+    batch_no: Optional[str] = Field(None, max_length=64)
+    shift: Optional[str] = Field(None, max_length=16)
+    production_date: Optional[datetime] = None
+    remark: Optional[str] = Field(None, max_length=500)
+
+
+class FormRecordCreate(FormRecordBase):
+    """创建表单记录：可选 initial_values（未填则生成空值）。"""
+    values: List[FormRecordKeyValue] = Field(default_factory=list)
+    auto_submit: bool = Field(False, description="true = 直接变为已提交状态；否则=草稿")
+    link_process_doc: bool = Field(True, description="true = 同步创建一条 process_documents (category=record) 关联条目,列表中可直接看到")
+
+
+class FormRecordUpdate(BaseModel):
+    """更新表单记录：元信息 + values 增量覆盖。"""
+    title: Optional[str] = Field(None, max_length=255)
+    equipment_id: Optional[int] = None
+    batch_no: Optional[str] = Field(None, max_length=64)
+    shift: Optional[str] = Field(None, max_length=16)
+    production_date: Optional[datetime] = None
+    remark: Optional[str] = Field(None, max_length=500)
+    values: Optional[List[FormRecordKeyValue]] = None
+
+
+class FormRecordOut(FormRecordBase):
+    id: int
+    status: str
+    filled_by: Optional[int] = None
+    submitted_at: Optional[datetime] = None
+    values: List[FormRecordKeyValue] = Field(default_factory=list)
+    # 展示辅助：模板信息快照
+    template_name: Optional[str] = None
+    template_category: Optional[str] = None
+    equipment_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+

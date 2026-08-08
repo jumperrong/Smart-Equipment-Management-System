@@ -78,6 +78,12 @@ const routes = [
         component: () => import('@/views/ProcessDocuments.vue'),
         meta: { title: '工艺文件', icon: 'Document' },
       },
+      {
+        path: 'form-templates',
+        name: 'FormTemplates',
+        component: () => import('@/views/FormTemplates.vue'),
+        meta: { title: '表单模板管理', icon: 'Tickets', roles: ['admin', 'process_engineer'] },
+      },
       // 分析改进
       {
         path: 'oee',

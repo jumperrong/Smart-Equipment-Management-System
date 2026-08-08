@@ -264,6 +264,10 @@ def download_process_document(doc_id: int, db: Session = Depends(get_db)):
     obj = db.query(ProcessDocument).filter(ProcessDocument.id == doc_id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="工艺文件不存在")
+    # 结构化表单记录：无物理上传文件，自动跳转到关联 form_record 的 CSV 导出
+    if not obj.stored_path and obj.form_record_id:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=f"/api/v1/form-records/{obj.form_record_id}/export/csv")
     base = _ensure_upload_dir()
     fp = os.path.join(base, obj.stored_path)
     if not os.path.exists(fp):

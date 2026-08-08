@@ -88,6 +88,11 @@ _FEATURES_DEF = [
     # 工艺文件
     ("process_doc.write",          "工艺文件上传/编辑", "工艺文件", ["admin", "process_engineer"]),
     ("process_doc.delete",         "工艺文件删除",      "工艺文件", ["admin"]),
+
+    # 表单模板与结构化记录
+    ("form_template.manage",       "表单模板管理(新增/编辑/删除/停用)", "表单与记录", ["admin", "process_engineer"]),
+    ("form_record.fill",           "结构化表单记录填写与提交",            "表单与记录", ["admin", "engineer", "process_engineer", "operator"]),
+    ("form_record.delete",         "结构化表单记录删除",                  "表单与记录", ["admin"]),
 ]
 
 
