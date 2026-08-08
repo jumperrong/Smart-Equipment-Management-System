@@ -11,11 +11,11 @@
           <el-input v-model="form.username" placeholder="用户名：admin" size="large" :prefix-icon="UserIcon" />
         </el-form-item>
         <el-form-item prop="password">
-          <el-input v-model="form.password" type="password" show-password placeholder="密码：admin123" size="large" :prefix-icon="LockIcon" @keyup.enter="onLogin" />
+          <el-input v-model="form.password" type="password" show-password placeholder="密码：Admin@2026" size="large" :prefix-icon="LockIcon" @keyup.enter="onLogin" />
         </el-form-item>
         <el-button type="primary" size="large" style="width:100%" :loading="loading" @click="onLogin">登 录</el-button>
       </el-form>
-      <div class="tip">默认账号：admin / admin123（登录后请及时修改）</div>
+      <div class="tip">默认账号：admin / Admin@2026</div>
     </el-card>
   </div>
 </template>
@@ -27,7 +27,7 @@ import { ElMessage } from 'element-plus'
 import { User as UserIcon, Lock as LockIcon } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores'
 
-const form = reactive({ username: 'admin', password: 'admin123' })
+const form = reactive({ username: 'admin', password: 'Admin@2026' })
 const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],

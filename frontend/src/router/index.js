@@ -82,7 +82,7 @@ const routes = [
         path: 'form-templates',
         name: 'FormTemplates',
         component: () => import('@/views/FormTemplates.vue'),
-        meta: { title: '表单模板管理', icon: 'Tickets', roles: ['admin', 'process_engineer'] },
+        meta: { title: '表单模板管理', icon: 'Tickets', roles: ['admin'] },
       },
       // 分析改进
       {

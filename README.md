@@ -691,6 +691,7 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 | 端口被占用 | 修改启动端口：后端 `--port 9000`，前端在 `vite.config.js` 中修改 `port` |
 | Docker 构建失败 | 确认 Docker 服务已启动，磁盘空间充足，网络可访问镜像源 |
 | 登录后提示 401 | Token 已过期，清除浏览器 localStorage 后重新登录 |
+| 页面反复提示"登录已过期，请重新登录" | **两种常见原因：** ① 浏览器缓存了旧 token（改密后旧 token 已失效），清除方法：F12 → Application → Local Storage → 删除 `sems_` 前缀的条目，或直接用无痕窗口打开；② 密码已被修改但仍在用旧密码登录——默认初始密码为弱密码 `admin123`，系统会在启动时自动标记 `must_change_password=True` 强制改密，改密后需使用新密码登录。若忘记密码，可在后端执行重置脚本：`python -c "from app.core.database import SessionLocal; from app.models import User; from app.core.security import get_password_hash; db=SessionLocal(); u=db.query(User).filter(User.username=='admin').first(); u.hashed_password=get_password_hash('新密码'); u.must_change_password=False; u.failed_login_count=0; u.locked_until=None; db.commit(); print('OK')"` |
 
 ---
 
