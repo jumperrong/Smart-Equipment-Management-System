@@ -22,3 +22,17 @@ frontend/.vite/
 
 # Docker volumes
 data/
+
+# 临时脚本 / 演示产物（一次性，不入库）
+/screenshots/
+/SEMS_功能介绍.pptx
+gen_ppt.py
+test_mcp_create.py
+test_mcp_create2.py
+upload_files.py
+upload_files_v2.py
+upload_files_v3.py
+upload_files_v4.py
+upload_files_v5.py
+upload_mcp.py
+backend/migrate_remove_report.py
