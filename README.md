@@ -8,6 +8,8 @@ Semiconductor Equipment Management System
 
 ## 版本 Highlights（最近一次主要更新）
 
+- **🎨 B+C 双皮肤主题（一明一暗）可跟随系统**：引入"极简青绿（明色 B 方案）"+"暗色霓虹（暗色 C 方案）"两套配色；顶栏按钮一键切换明色 / 暗色 / 跟随系统（`prefers-color-scheme`），偏好写入 localStorage，刷新仍生效。
+- **🌗 暗模式亮度统一补丁**：针对 Element Plus 组件（el-tag 实心/空心/浅色、el-button 实心、el-avatar、el-dropdown-menu、el-message、el-empty 等）在暗底上反白刺眼的问题做了增量修复，背景亮度统一压到 0.35 以下、文字对比度保持可读性，不再出现"白底淡蓝字"观感。
 - **表单模板与结构化记录**：管理员定义模板（字段类型/必填/选项/单位/范围），操作员选模板动态生成电子表单并填写，数据结构化存储可导出 JSON/CSV，替代传统 PDF 上传模式。
 - **作业记录新建电子表单**：在工艺文件→作业记录页面直接「新建电子表单」→选模板→填写→保存草稿/提交，自动归档为工艺文件条目；已有记录可点击「填写」按钮继续编辑。
 - **设备 DOWN 触发工单**：操作员 / 设备 / 工艺人员都可在台账右上角切换设备状态到 `DOWN`，系统自动创建 `REPAIR` 类型工单（含故障现象 + 紧急度），自动派发。
@@ -327,6 +329,62 @@ sems/
 - **备件库存**：备件信息、出入库流水
 - **点检记录**：点检模板与历史记录
 - **默认管理员**：admin / admin123
+
+---
+
+## 🎨 UI 主题：B 极简青绿（明） + C 暗色霓虹（暗） + 跟随系统
+
+系统内置两套主题，并支持一键跟随操作系统配色偏好。
+
+### 三套模式（顶栏右侧按钮切换）
+
+| 模式 | 说明 | 何时亮 / 暗 |
+|------|------|-------------|
+| **明色青绿（B 方案）** | 强制使用明色主题 | 始终 `:root` 变量 |
+| **暗色霓虹（C 方案）** | 强制使用暗色主题 | 始终 `html.dark` 变量 |
+| **跟随系统** | 跟随浏览器/OS 的 `prefers-color-scheme` 媒体查询 | 系统亮 → B；系统暗 → C |
+
+> 选择会写入 `localStorage.sems_theme_mode`，下次访问自动恢复；跟随系统时还会实时监听媒体查询变化（例如 macOS 从浅切换到深，页面立刻跟着切）。
+
+### 两套方案色板
+
+| 变量 | 方案 B（明色青绿） | 方案 C（暗色霓虹） |
+|------|-------------------|-------------------|
+| 主色 `--app-primary` | `#10B981` 翠绿 | `#22D3EE` 霓虹青 |
+| 侧栏背景 `--app-sidebar-bg` | `#FFFFFF` | `#0B1220` |
+| 页面背景 `--app-page-bg` | `#F8FAFC` | `#0F172A` |
+| 卡片背景 `--app-card-bg` | `#FFFFFF` | `#1E293B` |
+| 主文字 `--app-text-primary` | `#1E293B` | `#F1F5F9` |
+| 登录页渐变 | `青绿斜切 → 灰白` | `深蓝 斜切 → 深青` |
+
+### 暗模式"过亮"专项修复
+
+原 Element Plus 在自定义暗色变量后，`el-tag effect="dark"`、`el-button 实心`、`el-avatar`、`el-dropdown-menu` 等组件仍会使用明色逻辑的高亮度背景，产生"白底淡蓝字"刺眼观感。当前版本内置了增量补丁（**只在 `html.dark` 下追加覆盖规则，不影响明色**）：
+
+- `el-tag effect="dark"`：语义色背景改为 `14~18%` 半透明 + 同色系描边，背景亮度从 `0.60~0.75` 降到 `≈0.12`。
+- `el-tag effect="light" / plain`：空心/浅色标签统一压到 `10%` 半透明底。
+- `el-button 实心`：primary/success/warning/danger/info 使用更深色阶（`#0891B2 / #059669 / #D97706 / #DC2626 / #475569`），不再反白。
+- `el-avatar`：主色背景改为半透明 + 内描边。
+- `el-dropdown-menu / el-message / el-empty 描述`：统一落 `#1E293B` 暗底。
+
+### 技术实现 & 如何自定义主题
+
+- 主题变量集中在 [frontend/src/styles/theme.css](file:///workspace/frontend/src/styles/theme.css)：
+  - `:root` 块 = 明色方案（B）
+  - `html.dark` 块 = 暗色方案（C）
+  - `html.dark .xxx` 追加选择器 = 暗模式补丁
+- 主题切换逻辑封装在 composable 里：[frontend/src/composables/useTheme.js](file:///workspace/frontend/src/composables/useTheme.js)
+  - 三态：`light / dark / auto`；`auto` 模式下监听 `window.matchMedia('(prefers-color-scheme: dark)')`。
+  - 持久化 key：`sems_theme_mode`（localStorage）。
+  - 生效方式：在 `<html>` 根元素上增删 `.dark` 类，配合 `color-scheme: dark` 让原生控件也跟随。
+- 在顶栏 [MainLayout.vue](file:///workspace/frontend/src/layouts/MainLayout.vue) 接入下拉切换按钮：图标 + 标签（"明色青绿 / 暗色霓虹 / 跟随系统"），并对所有组件移除硬编码颜色，改用 `var(--app-xxx)` / `var(--el-color-xxx)` 变量。
+
+**想改配色？只需三步**：
+1. 编辑 `theme.css` 的 `:root`（明色）或 `html.dark`（暗色）变量；
+2. 对应改 `--app-primary / --app-page-bg / --app-card-bg` 及 Element Plus 覆盖变量；
+3. 刷新即可（如果是跟随系统模式，要注意 OS 配色再验证一下暗色部分）。
+
+相关代码：[theme.css](file:///workspace/frontend/src/styles/theme.css) · [useTheme.js](file:///workspace/frontend/src/composables/useTheme.js) · [MainLayout.vue](file:///workspace/frontend/src/layouts/MainLayout.vue) · [Dashboard.vue](file:///workspace/frontend/src/views/Dashboard.vue)
 
 ---
 

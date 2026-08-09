@@ -56,9 +56,49 @@ def add_rect(slide, x, y, w, h, fill=None, line=None, line_w=None, radius=None):
         if line_w: shp.line.width = line_w
     return shp
 
+# 默认字体：使用中文字体名称（英文字体名在手机/跨平台 WPS 上常找不到）
+CJK_FONT = "微软雅黑"            # 主字体：Windows/手机Office/WPS 覆盖最广
+CJK_FONT_FALLBACK_1 = "黑体"      # 次选：几乎所有中文环境都自带
+CJK_FONT_FALLBACK_2 = "宋体"      # 兜底：任何中文系统必带
+CJK_FONT_LINUX = "Noto Sans CJK SC"  # 服务器/转 PDF 时的本地字体名
+
+
+def _set_run_fonts(r, font_main=None, size=None, bold=None, color=None):
+    """给 run 设置跨平台兼容的中文字体（Latin / 东亚 / 复杂脚本 三处同时设置）。"""
+    if font_main is None:
+        font_main = CJK_FONT
+    # 1. 通用/Latin 字体
+    r.font.name = font_main
+    if size is not None:
+        r.font.size = Pt(size)
+    if bold is not None:
+        r.font.bold = bold
+    if color is not None:
+        r.font.color.rgb = color
+    # 2. 东亚字体 a:ea
+    rPr = r._r.get_or_add_rPr()
+    ea = rPr.find(qn('a:ea'))
+    if ea is None:
+        ea = etree.SubElement(rPr, qn('a:ea'))
+    ea.set('typeface', font_main)
+    # 3. 复杂脚本字体 a:cs
+    cs = rPr.find(qn('a:cs'))
+    if cs is None:
+        cs = etree.SubElement(rPr, qn('a:cs'))
+    cs.set('typeface', font_main)
+    # 4. 在 <a:latin> 里也再声明一次（有些解析器只认它）
+    latin = rPr.find(qn('a:latin'))
+    if latin is None:
+        latin = etree.SubElement(rPr, qn('a:latin'))
+    latin.set('typeface', font_main)
+    return r
+
+
 def add_text(slide, x, y, w, h, text, *, size=14, bold=False, color=TEXT,
-             align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP, font="Microsoft YaHei",
+             align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP, font=None,
              spacing=None):
+    if font is None:
+        font = CJK_FONT
     tb = slide.shapes.add_textbox(x, y, w, h)
     tf = tb.text_frame
     tf.word_wrap = True
@@ -72,16 +112,7 @@ def add_text(slide, x, y, w, h, text, *, size=14, bold=False, color=TEXT,
         if spacing: p.space_after = spacing
         r = p.add_run()
         r.text = line
-        r.font.name = font
-        r.font.size = Pt(size)
-        r.font.bold = bold
-        r.font.color.rgb = color
-        # 让中文 fallback 到中文字体
-        rPr = r._r.get_or_add_rPr()
-        ea = rPr.find(qn('a:ea'))
-        if ea is None:
-            ea = etree.SubElement(rPr, qn('a:ea'))
-        ea.set('typeface', font)
+        _set_run_fonts(r, font_main=font, size=size, bold=bold, color=color)
     return tb
 
 def add_page_banner(slide, title, subtitle="", page_no=None, total=None):
@@ -117,35 +148,17 @@ def add_bullets(slide, x, y, w, h, items, *, size=13, color=TEXT, bullet="•",
         p.space_after = Pt(line_space)
         r = p.add_run()
         r.text = f"{bullet}  "
-        r.font.name = "Microsoft YaHei"
-        r.font.size = Pt(size)
-        r.font.color.rgb = color
-        rPr = r._r.get_or_add_rPr()
-        ea = rPr.find(qn('a:ea'))
-        if ea is None: ea = etree.SubElement(rPr, qn('a:ea'))
-        ea.set('typeface', "Microsoft YaHei")
+        _set_run_fonts(r, size=size, color=color)
         # 内容，可 bold_first 模式（冒号前加粗）
         if bold_first and "：" in it:
             head, _, rest = it.partition("：")
             r1 = p.add_run(); r1.text = head + "："
-            r1.font.name="Microsoft YaHei"; r1.font.size=Pt(size); r1.font.bold=True; r1.font.color.rgb=color
-            rPr1 = r1._r.get_or_add_rPr()
-            ea1 = rPr1.find(qn('a:ea'))
-            if ea1 is None: ea1 = etree.SubElement(rPr1, qn('a:ea'))
-            ea1.set('typeface', "Microsoft YaHei")
+            _set_run_fonts(r1, size=size, bold=True, color=color)
             r2 = p.add_run(); r2.text = rest
-            r2.font.name="Microsoft YaHei"; r2.font.size=Pt(size); r2.font.color.rgb=color
-            rPr2 = r2._r.get_or_add_rPr()
-            ea2 = rPr2.find(qn('a:ea'))
-            if ea2 is None: ea2 = etree.SubElement(rPr2, qn('a:ea'))
-            ea2.set('typeface', "Microsoft YaHei")
+            _set_run_fonts(r2, size=size, color=color)
         else:
             r2 = p.add_run(); r2.text = it
-            r2.font.name="Microsoft YaHei"; r2.font.size=Pt(size); r2.font.color.rgb=color
-            rPr2 = r2._r.get_or_add_rPr()
-            ea2 = rPr2.find(qn('a:ea'))
-            if ea2 is None: ea2 = etree.SubElement(rPr2, qn('a:ea'))
-            ea2.set('typeface', "Microsoft YaHei")
+            _set_run_fonts(r2, size=size, color=color)
     return tb
 
 def add_swatch(slide, x, y, color, label, desc):
@@ -183,18 +196,11 @@ def add_table(slide, x, y, w, h, data, *, header_fill=SLATE,
             p = tf.paragraphs[0]
             run = p.add_run()
             run.text = str(data[r][c])
-            run.font.name = "Microsoft YaHei"
-            rPr = run._r.get_or_add_rPr()
-            ea = rPr.find(qn('a:ea'))
-            if ea is None: ea = etree.SubElement(rPr, qn('a:ea'))
-            ea.set('typeface', "Microsoft YaHei")
             is_header = (r == 0)
             is_first_col = (c == 0)
             if is_header:
                 cell.fill.solid(); cell.fill.fore_color.rgb = header_fill
-                run.font.bold = True
-                run.font.size = Pt(header_size)
-                run.font.color.rgb = header_color
+                _set_run_fonts(run, size=header_size, bold=True, color=header_color)
                 p.alignment = PP_ALIGN.CENTER
             else:
                 if first_col_fill and is_first_col:
@@ -203,10 +209,9 @@ def add_table(slide, x, y, w, h, data, *, header_fill=SLATE,
                     cell.fill.solid(); cell.fill.fore_color.rgb = alt_fill
                 else:
                     cell.fill.solid(); cell.fill.fore_color.rgb = WHITE
-                run.font.size = Pt(cell_size)
-                run.font.color.rgb = cell_color
-                if first_col_bold and is_first_col:
-                    run.font.bold = True
+                _set_run_fonts(run, size=cell_size,
+                               bold=(first_col_bold and is_first_col),
+                               color=cell_color)
     return tbl_shape
 
 def add_image(img_path, slide, x, y, w, h=None, caption=None, caption_color=MUTED):
@@ -219,7 +224,7 @@ def add_image(img_path, slide, x, y, w, h=None, caption=None, caption_color=MUTE
     return shp
 
 # ========= 页 1 封面 =========
-TOTAL = 22
+TOTAL = 26
 s = prs.slides.add_slide(BLANK)
 # 背景
 add_rect(s, 0, 0, SW, SH, fill=SLATE)
@@ -932,23 +937,227 @@ add_image(f"{IMGDIR}/design_scheme_A_modern_blue.jpg", s,
           caption="（实际落地后细节会以真实组件渲染为准）",
           caption_color=MUTED)
 
-# ========= 页 22 结束页 =========
+# ========= 页 22 B+C 双皮肤：实施方案说明（已落地） =========
+s = prs.slides.add_slide(BLANK)
+add_page_banner(s, "落地进展 · 已实施方案：B + C 双皮肤（跟随系统）",
+                "「极简青绿 明色」 + 「暗色霓虹 暗色」双主题，一键切换 / 自动跟随 OS 配色", 22, TOTAL)
+
+# 左侧明色卡片
+add_rect(s, Inches(0.5), Inches(1.3), Inches(6.0), Inches(5.8),
+         fill=RGBColor(0xF8,0xFA,0xFC), line=BORDER, line_w=Pt(1), radius=0.04)
+add_rect(s, Inches(0.5), Inches(1.3), Inches(6.0), Inches(0.85), fill=GREEN, radius=0.04)
+add_text(s, Inches(0.7), Inches(1.42), Inches(5.6), Inches(0.35),
+         "方案 B · 极简青绿（明色）", size=18, bold=True, color=WHITE)
+add_text(s, Inches(0.7), Inches(1.78), Inches(5.6), Inches(0.32),
+         "LIGHT · 洁净车间 / 白天办公首选", size=11, color=RGBColor(0xD1,0xFA,0xE5))
+add_bullets(s, Inches(0.7), Inches(2.3), Inches(5.6), Inches(4.8),
+            ["主色 #10B981 翠绿；背景 F8FAFC（干净无压迫）",
+             "侧栏纯白 + 翠绿高亮，视觉重心在看板数据",
+             "登录页：青绿斜切渐变，干净易辨识",
+             "状态标签：高饱和语义色 + 白色描边",
+             "适用：洁净室办公、白天车间电脑、给客户演示投屏"],
+            size=12.5, color=TEXT, bullet="·", line_space=8)
+
+# 右侧暗色卡片
+add_rect(s, Inches(6.8), Inches(1.3), Inches(6.0), Inches(5.8),
+         fill=RGBColor(0x0F,0x17,0x2A), line=RGBColor(0x33,0x41,0x55), line_w=Pt(1), radius=0.04)
+add_rect(s, Inches(6.8), Inches(1.3), Inches(6.0), Inches(0.85), fill=CYAN, radius=0.04)
+add_text(s, Inches(7.0), Inches(1.42), Inches(5.6), Inches(0.35),
+         "方案 C · 暗色霓虹（暗色）", size=18, bold=True, color=RGBColor(0x0B,0x12,0x20))
+add_text(s, Inches(7.0), Inches(1.78), Inches(5.6), Inches(0.32),
+         "DARK · 夜班监控 / 大屏 / 低视觉疲劳", size=11, color=RGBColor(0x16,0x4E,0x5B))
+add_bullets(s, Inches(7.0), Inches(2.3), Inches(5.6), Inches(4.8),
+            ["主色 #22D3EE 霓虹青；页面 0F172A（深夜蓝）",
+             "卡片 1E293B + 霓虹描边弱发光，大屏不反光",
+             "登录页：深蓝 135° → 深青斜切，夜间低刺激",
+             "状态标签：10~18% 半透明色底 + 同色系描边（不过亮）",
+             "适用：夜班工程师、洁净室监控大屏、长时间看板值守"],
+            size=12.5, color=RGBColor(0xE2,0xE8,0xF0), bullet="·", line_space=8)
+
+# ========= 页 23 B+C 双皮肤：三模式切换 + 技术实现 =========
+s = prs.slides.add_slide(BLANK)
+add_page_banner(s, "落地进展 · 三态切换机制与技术实现",
+                "顶栏下拉：明色 / 暗色 / 跟随系统；状态 & 偏好持久化", 23, TOTAL)
+
+# 左：三态机制说明（三列方块）
+modes = [
+    ("LIGHT", GREEN, "明色青绿",
+     ["强制 :root 变量",
+      "始终亮底",
+      "图标 ☀",
+      "适合白天办公室"]),
+    ("DARK",  CYAN,  "暗色霓虹",
+     ["html.dark 类生效",
+      "始终暗底",
+      "图标 ☾",
+      "适合夜班/大屏"]),
+    ("AUTO",  INDIGO,"跟随系统",
+     ["prefers-color-scheme",
+      "OS 浅/深实时切换",
+      "图标 🖥",
+      "★ 个人办公首选"]),
+]
+mx = Inches(0.4)
+for i, (code, color, name, items) in enumerate(modes):
+    x = mx + Inches(4.2) * i
+    add_rect(s, x, Inches(1.4), Inches(3.9), Inches(2.6),
+             fill=WHITE, line=BORDER, line_w=Pt(1), radius=0.04)
+    add_rect(s, x + Inches(0.2), Inches(1.55), Inches(0.9), Inches(0.45),
+             fill=color, radius=0.04)
+    add_text(s, x + Inches(0.2), Inches(1.6), Inches(0.9), Inches(0.35),
+             code, size=12, bold=True, color=WHITE,
+             align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    add_text(s, x + Inches(1.25), Inches(1.58), Inches(2.5), Inches(0.4),
+             name, size=16, bold=True, color=TEXT, anchor=MSO_ANCHOR.MIDDLE)
+    add_bullets(s, x + Inches(0.2), Inches(2.1), Inches(3.5), Inches(1.7),
+                items, size=12, color=MUTED, bullet="›", line_space=6)
+
+# 右下：技术实现
+add_rect(s, Inches(0.4), Inches(4.2), Inches(12.5), Inches(3.0),
+         fill=WHITE, line=BORDER, line_w=Pt(1), radius=0.04)
+add_rect(s, Inches(0.4), Inches(4.2), Inches(12.5), Inches(0.55), fill=PURPLE, radius=0.04)
+add_text(s, Inches(0.6), Inches(4.25), Inches(12.1), Inches(0.45),
+         "实现要点（可二次自定义）", size=15, bold=True, color=WHITE, anchor=MSO_ANCHOR.MIDDLE)
+
+tech_rows = [
+    ("主题变量集中",    "frontend/src/styles/theme.css → :root（明色） + html.dark（暗色） + 暗模式增量补丁"),
+    ("切换逻辑",        "frontend/src/composables/useTheme.js → light/dark/auto 三态；auto 监听 matchMedia"),
+    ("UI 接入",         "frontend/src/layouts/MainLayout.vue 顶栏下拉按钮；移除硬编码颜色"),
+    ("持久化",          "localStorage key = sems_theme_mode，刷新/换页仍生效，不随账号走"),
+    ("跟随系统",        "matchMedia('(prefers-color-scheme: dark)') 加 listener，OS 切换立即可见"),
+]
+ty = Inches(4.85)
+for k, v in tech_rows:
+    add_text(s, Inches(0.6), ty, Inches(2.4), Inches(0.4),
+             k, size=12.5, bold=True, color=TEXT)
+    add_text(s, Inches(3.0), ty, Inches(9.8), Inches(0.4),
+             v, size=12, color=MUTED)
+    ty = ty + Inches(0.42)
+
+# ========= 页 24 暗模式"过亮"专项修复 =========
+s = prs.slides.add_slide(BLANK)
+add_page_banner(s, "落地进展 · 暗模式亮度统一补丁（已修复）",
+                "针对 Element Plus 组件在暗底上「白底淡蓝字」刺眼观感做增量覆盖修复", 24, TOTAL)
+
+# 左：问题清单
+add_rect(s, Inches(0.4), Inches(1.3), Inches(6.1), Inches(5.8),
+         fill=RGBColor(0xFE,0xF2,0xF2), line=RGBColor(0xF4,0x3F,0x5E), line_w=Pt(1), radius=0.04)
+add_rect(s, Inches(0.4), Inches(1.3), Inches(6.1), Inches(0.75), fill=RED, radius=0.04)
+add_text(s, Inches(0.6), Inches(1.4), Inches(5.7), Inches(0.6),
+         "修复前 · 过亮组件清单", size=16, bold=True, color=WHITE, anchor=MSO_ANCHOR.MIDDLE)
+problems = [
+    ("el-tag effect=dark", "warning 黄背景亮度 0.75；primary/success/info 都在 0.62+"),
+    ("el-tag effect=light/plain", "沿用明色浅色底逻辑 → 在暗底上直接反白"),
+    ("el-button 实心",     "主/成/警/危/信息 都用明色高饱和 → 暗页一块一块亮色块"),
+    ("el-avatar",          "头像背景整块 #22D3EE（0.63 亮度），右上角像高亮提示"),
+    ("下拉 / 消息气泡",    "el-dropdown-menu / el-message 默认仍是 Element Plus 白底"),
+]
+py = Inches(2.2)
+for k, v in problems:
+    add_text(s, Inches(0.6), py, Inches(5.7), Inches(0.3),
+             f"· {k}", size=12.5, bold=True, color=TEXT)
+    add_text(s, Inches(0.9), py + Inches(0.3), Inches(5.4), Inches(0.3),
+             f"  {v}", size=11, color=MUTED)
+    py += Inches(0.75)
+
+# 右：修复措施
+add_rect(s, Inches(6.8), Inches(1.3), Inches(6.1), Inches(5.8),
+         fill=RGBColor(0xEC,0xFD,0xF5), line=GREEN, line_w=Pt(1), radius=0.04)
+add_rect(s, Inches(6.8), Inches(1.3), Inches(6.1), Inches(0.75), fill=GREEN, radius=0.04)
+add_text(s, Inches(7.0), Inches(1.4), Inches(5.7), Inches(0.6),
+         "修复后 · 增量补丁策略", size=16, bold=True, color=WHITE, anchor=MSO_ANCHOR.MIDDLE)
+fixes = [
+    ("不打 :root", "仅在 html.dark 下追加选择器覆盖，零侵入明色"),
+    ("el-tag 三形态", "语义色改 10~18% 半透明 + 同色系描边，背景亮度 ≈0.12"),
+    ("el-button 实心",  "更深色阶：#0891B2 / #059669 / #D97706 / #DC2626 / #475569"),
+    ("el-avatar",        "半透明 18% + 内描边，不再是整块亮色块"),
+    ("下拉/消息/空态",  "统一压到 #1E293B 暗底 + #334155 描边"),
+    ("最终指标",         "所有标签/按钮/头像背景亮度 全部 < 0.35"),
+]
+py = Inches(2.2)
+for k, v in fixes:
+    add_text(s, Inches(7.0), py, Inches(5.7), Inches(0.3),
+             f"✓ {k}", size=12.5, bold=True, color=TEXT)
+    add_text(s, Inches(7.3), py + Inches(0.3), Inches(5.4), Inches(0.3),
+             f"  {v}", size=11, color=MUTED)
+    py += Inches(0.68)
+
+# ========= 页 25 功能介绍 · 整体架构与亮点总览 =========
+s = prs.slides.add_slide(BLANK)
+add_page_banner(s, "介绍 · SEMS 是什么 + 近期亮点",
+                "半导体设备管理系统：从台账到表单结构化的一体化方案", 25, TOTAL)
+
+# 左：六大功能群（3 列 × 2 行卡片）
+add_rect(s, Inches(0.4), Inches(1.3), Inches(8.0), Inches(5.8),
+         fill=WHITE, line=BORDER, line_w=Pt(1), radius=0.04)
+add_text(s, Inches(0.6), Inches(1.4), Inches(7.6), Inches(0.45),
+         "12 大核心模块", size=17, bold=True, color=TEXT)
+
+cards = [
+    (BLUE,   "看板 & 台账",    ["实时状态看板","设备档案 & 附件","DOWN 自动派工单"]),
+    (GREEN,  "点检 & PM",      ["点检模板/记录","周期 PM 计划","到期自动生成工单"]),
+    (ORANGE, "工单 & 维护",    ["REPAIR/PM 工单","紧急度 & 时长","5Why + 备件领用"]),
+    (CYAN,   "工艺 & 表单",    ["指导性文件版本","作业记录结构化表单","JSON/CSV 导出"]),
+    (PURPLE, "品管 & 环境",    ["8D 报告","FMEA 风险优先数","温湿度洁净度日志"]),
+    (RED,    "人员 & 资产 & 系统", ["技能矩阵","资产调拨报废","备份/加密/IP 白名单"]),
+]
+for i, (color, title, items) in enumerate(cards):
+    row = i // 3
+    col = i % 3
+    x = Inches(0.6) + Inches(2.5) * col
+    y = Inches(1.95) + Inches(2.55) * row
+    add_rect(s, x, y, Inches(2.3), Inches(2.35),
+             fill=RGBColor(0xFF,0xFF,0xFF), line=BORDER, line_w=Pt(1), radius=0.05)
+    add_rect(s, x, y, Inches(0.22), Inches(2.35), fill=color)
+    add_text(s, x + Inches(0.35), y + Inches(0.15), Inches(1.85), Inches(0.4),
+             title, size=13.5, bold=True, color=TEXT)
+    add_bullets(s, x + Inches(0.35), y + Inches(0.65), Inches(1.85), Inches(1.6),
+                items, size=11, color=MUTED, bullet="›", line_space=5)
+
+# 右：近期亮点时间线
+add_rect(s, Inches(8.7), Inches(1.3), Inches(4.2), Inches(5.8),
+         fill=SLATE, line=None, radius=0.04)
+add_text(s, Inches(8.9), Inches(1.45), Inches(3.8), Inches(0.5),
+         "近期重点（Highlights）", size=15, bold=True, color=WHITE)
+
+highlights = [
+    ("①", GREEN,  "B+C 双皮肤主题",      "明/暗/跟随系统 三模切换"),
+    ("②", CYAN,   "暗模式亮度补丁",      "标签/按钮不再亮瞎眼"),
+    ("③", INDIGO, "结构化电子表单",      "模板定义 → 填写 → 导出 JSON/CSV"),
+    ("④", AMBER,  "DOWN 自动派工单",     "状态切 DOWN → 自动创 REPAIR 工单"),
+    ("⑤", ROSE,   "3-2-1 低成本灾备",    "加密 + NAS 异地 + 烟雾还原"),
+    ("⑥", PURPLE, "局域网安全加固",      "密码策略 + JWT 双令牌 + 审计"),
+]
+hy = Inches(2.1)
+for mark, color, title, desc in highlights:
+    add_rect(s, Inches(8.9), hy, Inches(0.45), Inches(0.45),
+             fill=color, radius=0.1)
+    add_text(s, Inches(8.9), hy, Inches(0.45), Inches(0.45),
+             mark, size=13, bold=True, color=WHITE,
+             align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    add_text(s, Inches(9.5), hy, Inches(3.3), Inches(0.3),
+             title, size=12, bold=True, color=WHITE)
+    add_text(s, Inches(9.5), hy + Inches(0.3), Inches(3.3), Inches(0.3),
+             desc, size=10.5, color=RGBColor(0x94,0xA3,0xB8))
+    hy += Inches(0.82)
+
+# ========= 页 26 结束页 =========
 s = prs.slides.add_slide(BLANK)
 add_rect(s, 0, 0, SW, SH, fill=SLATE)
 add_rect(s, 0, Inches(3.4), SW, Inches(0.05), fill=BLUE)
 add_rect(s, 0, Inches(3.48), Inches(5), Inches(0.05), fill=GREEN)
 add_rect(s, 0, Inches(3.56), Inches(3), Inches(0.05), fill=CYAN)
 add_text(s, 0, Inches(2.1), SW, Inches(1.0),
-         "请选择您倾向的方案", size=38, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+         "B + C 双皮肤方案已上线", size=38, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
 add_text(s, 0, Inches(3.8), SW, Inches(0.7),
-         "A · 现代蓝   /   B · 极简青绿   /   C · 暗色霓虹   /   B + C 双皮肤",
-         size=20, color=BLUE, align=PP_ALIGN.CENTER)
+         "明色青绿 · 暗色霓虹 · 跟随系统  ·  暗模式亮度统一补丁已落地",
+         size=20, color=GREEN, align=PP_ALIGN.CENTER)
 add_text(s, 0, Inches(5.0), SW, Inches(0.4),
-         "或者对任一方案提出具体修改点（色、布局、侧栏、卡片…）",
+         "文档：README.md / docs/用户使用教程.md · 代码：frontend/src/styles/theme.css + useTheme.js",
          size=14, color=RGBColor(0x94,0xA3,0xB8), align=PP_ALIGN.CENTER)
 add_text(s, 0, SH - Inches(1.1), SW, Inches(0.4),
-         "选定后立即进入阶段 1 · 产出可交互 Demo 视觉走查",
-         size=14, color=GREEN, align=PP_ALIGN.CENTER)
+         "有其它配色/组件体验微调需求可随时提出 → 只改 theme.css 变量即可迭代",
+         size=14, color=CYAN, align=PP_ALIGN.CENTER)
 
 
 # ========= 保存 =========

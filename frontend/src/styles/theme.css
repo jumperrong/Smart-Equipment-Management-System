@@ -225,3 +225,147 @@ html.dark .el-input__wrapper,
 html.dark .el-menu {
   transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
 }
+
+/* ============================================================
+ * 暗模式增量补丁：修复"过亮"区域（el-tag effect=dark / el-avatar / el-button 等）
+ * 只在 html.dark 下生效，不改动 :root 明色
+ * ============================================================ */
+
+/* 1. el-tag effect="dark" 实心标签：暗色下调底色亮度到 20~30% 之间，
+ * 并使用半透明深色底 + 主题色边框/文字（仅 3~5% 对比度提升，不破坏语义色） */
+html.dark .el-tag--dark.el-tag--primary {
+  background-color: rgba(34, 211, 238, 0.15);
+  color: #67E8F9;
+  border: 1px solid rgba(34, 211, 238, 0.35);
+}
+html.dark .el-tag--dark.el-tag--success {
+  background-color: rgba(52, 211, 153, 0.15);
+  color: #6EE7B7;
+  border: 1px solid rgba(52, 211, 153, 0.35);
+}
+html.dark .el-tag--dark.el-tag--warning {
+  background-color: rgba(251, 191, 36, 0.14);
+  color: #FCD34D;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+html.dark .el-tag--dark.el-tag--danger {
+  background-color: rgba(248, 113, 113, 0.15);
+  color: #FCA5A5;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+}
+html.dark .el-tag--dark.el-tag--info {
+  background-color: rgba(148, 163, 184, 0.18);
+  color: #CBD5E1;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+/* 2. el-avatar：暗色下调亮度过高的主色背景 → 半透明 + 描边，避免亮色块刺目 */
+html.dark .el-avatar {
+  background-color: rgba(34, 211, 238, 0.18) !important;
+  color: #67E8F9 !important;
+  box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.4);
+}
+
+/* 3. el-button 非文字类型按钮（实心）：暗色下调亮度，避免"白底淡蓝字"观感 */
+html.dark .el-button--primary:not(.is-text),
+html.dark .el-button--success:not(.is-text),
+html.dark .el-button--warning:not(.is-text),
+html.dark .el-button--danger:not(.is-text),
+html.dark .el-button--info:not(.is-text) {
+  color: #0B1220;
+  border-color: transparent;
+}
+/* 主色/成功/危险 进一步下调底色明度 */
+html.dark .el-button--primary {
+  background-color: #0891B2 !important;
+}
+html.dark .el-button--success {
+  background-color: #059669 !important;
+}
+html.dark .el-button--warning {
+  background-color: #D97706 !important;
+}
+html.dark .el-button--danger {
+  background-color: #DC2626 !important;
+}
+html.dark .el-button--info {
+  background-color: #475569 !important;
+  color: #F1F5F9 !important;
+}
+
+/* 4. el-button 默认按钮：暗色下调白底（默认按钮底色是 #ffffff 的 Element Plus 默认） */
+html.dark .el-button--default:not(.is-text) {
+  background-color: #1E293B;
+  border-color: #334155;
+  color: #CBD5E1;
+}
+html.dark .el-button--default:not(.is-text):hover {
+  background-color: #283548;
+  border-color: #475569;
+  color: #F1F5F9;
+}
+
+/* 5. 所有 el-tag effect="plain"（空心）暗色下把默认浅底压暗 */
+html.dark .el-tag--plain {
+  background-color: transparent;
+}
+
+/* 6. el-tag effect="light" 暗色下：默认浅底/文字颜色要降白 */
+html.dark .el-tag--light.el-tag--primary {
+  background-color: rgba(34, 211, 238, 0.10);
+  color: #67E8F9;
+  border-color: rgba(34, 211, 238, 0.3);
+}
+html.dark .el-tag--light.el-tag--success {
+  background-color: rgba(52, 211, 153, 0.10);
+  color: #6EE7B7;
+  border-color: rgba(52, 211, 153, 0.3);
+}
+html.dark .el-tag--light.el-tag--warning {
+  background-color: rgba(251, 191, 36, 0.10);
+  color: #FCD34D;
+  border-color: rgba(251, 191, 36, 0.3);
+}
+html.dark .el-tag--light.el-tag--danger {
+  background-color: rgba(248, 113, 113, 0.10);
+  color: #FCA5A5;
+  border-color: rgba(248, 113, 113, 0.3);
+}
+html.dark .el-tag--light.el-tag--info {
+  background-color: rgba(148, 163, 184, 0.12);
+  color: #CBD5E1;
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+/* 7. el-dropdown-menu / el-dialog / el-message-box 暗色下避免使用默认白底 */
+html.dark .el-dropdown-menu {
+  background-color: #1E293B !important;
+  border: 1px solid #334155;
+}
+html.dark .el-dropdown-menu__item,
+html.dark .el-dropdown-menu__item--divided::before {
+  border-color: #334155;
+}
+html.dark .el-dropdown-menu__item {
+  color: #CBD5E1;
+}
+html.dark .el-dropdown-menu__item:hover,
+html.dark .el-dropdown-menu__item:focus {
+  background-color: rgba(34, 211, 238, 0.08);
+  color: #67E8F9;
+}
+
+/* 8. el-message 暗色下默认偏白，压暗（Element Plus 的 message 在暗色模式下仍可能亮） */
+html.dark .el-message {
+  background-color: #1E293B !important;
+  border: 1px solid #334155 !important;
+}
+html.dark .el-message__content {
+  color: #CBD5E1 !important;
+}
+
+/* 9. el-empty / 加载骨架屏暗色下保持灰阶，避免反白 */
+html.dark .el-empty__description p {
+  color: #94A3B8;
+}
+

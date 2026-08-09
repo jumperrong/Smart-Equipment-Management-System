@@ -36,3 +36,11 @@ upload_files_v4.py
 upload_files_v5.py
 upload_mcp.py
 backend/migrate_remove_report.py
+
+# 临时分享/预览产物
+.trae-html-share-packages/
+/preview/
+/dl_font.py
+
+# 评审 PPT 导出的 PDF（由 PPT 再导出，不做版本源）
+/SEMS_UI设计评审与方案对比.pdf
