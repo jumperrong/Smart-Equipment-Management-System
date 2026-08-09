@@ -2,7 +2,7 @@
   <div class="login-bg">
     <el-card class="login-card" shadow="hover">
       <div class="title-area">
-        <el-icon :size="36" color="#409eff"><Cpu /></el-icon>
+        <el-icon :size="36" class="login-logo-icon"><Cpu /></el-icon>
         <h2>半导体设备管理系统</h2>
         <p class="subtitle">Semiconductor Equipment Management System</p>
       </div>
@@ -65,7 +65,7 @@ async function onLogin() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+  background: var(--app-login-grad);
 }
 .login-card {
   width: 420px;
@@ -73,7 +73,8 @@ async function onLogin() {
   border-radius: 12px;
 }
 .title-area { text-align: center; margin-bottom: 24px; }
-.title-area h2 { margin: 10px 0 6px; color: #1f2d3d; letter-spacing: 1px; }
-.subtitle { margin: 0; color: #909399; font-size: 13px; }
-.tip { text-align: center; margin-top: 16px; color: #909399; font-size: 12px; }
+.login-logo-icon { color: var(--app-primary); }
+.title-area h2 { margin: 10px 0 6px; color: var(--app-text-primary); letter-spacing: 1px; }
+.subtitle { margin: 0; color: var(--app-text-secondary); font-size: 13px; }
+.tip { text-align: center; margin-top: 16px; color: var(--app-text-muted); font-size: 12px; }
 </style>

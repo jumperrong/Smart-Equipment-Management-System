@@ -196,8 +196,8 @@ onMounted(load)
   max-width: 240px;
   padding: 14px 16px;
   border-radius: 6px;
-  background: #f5f7fa;
-  border: 1px solid #e4e7ed;
+  background: var(--app-info-bg);
+  border: 1px solid var(--app-border);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -207,34 +207,34 @@ onMounted(load)
 }
 .tile:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  box-shadow: var(--app-shadow-hover);
 }
 .tile-num {
   font-size: 28px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
-  color: #909399;
+  color: var(--app-text-secondary);
 }
 .tile-label {
   margin-top: 4px;
   font-size: 12px;
-  color: #909399;
+  color: var(--app-text-secondary);
 }
-.tile-down.has-count { background: #fef0f0; border-color: #f56c6c; }
+.tile-down.has-count { background: var(--app-danger-bg); border-color: var(--app-danger); }
 .tile-down.has-count .tile-num,
-.tile-down.has-count .tile-label { color: #f56c6c; }
-.tile-pm.has-count { background: #f0f9eb; border-color: #67c23a; }
+.tile-down.has-count .tile-label { color: var(--app-danger); }
+.tile-pm.has-count { background: var(--app-success-bg); border-color: var(--app-success); }
 .tile-pm.has-count .tile-num,
-.tile-pm.has-count .tile-label { color: #529b2e; }
+.tile-pm.has-count .tile-label { color: var(--app-success); }
 /* PM 进行中且其中存在超时：边框转红 + 红斜纹背景提示风险 */
 .tile-pm.has-overtime {
-  background: repeating-linear-gradient(135deg, #f0f9eb 0, #f0f9eb 10px, #fef0f0 10px, #fef0f0 20px);
-  border-color: #f56c6c;
+  background: repeating-linear-gradient(135deg, var(--app-success-bg) 0, var(--app-success-bg) 10px, var(--app-danger-bg) 10px, var(--app-danger-bg) 20px);
+  border-color: var(--app-danger);
 }
 .tile-pm.has-overtime .ot-sub {
   margin-left: 6px;
-  color: #b8392b;
+  color: var(--app-danger);
   font-weight: 600;
   font-size: 11px;
 }
@@ -244,11 +244,11 @@ onMounted(load)
 .header-right { display: flex; align-items: center; }
 .eq-cell { display: flex; flex-direction: column; line-height: 1.4; }
 .eq-name {
-  font-weight: 600; color: #303133; font-size: 13px;
+  font-weight: 600; color: var(--app-text-primary); font-size: 13px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px;
 }
 .eq-asset {
-  font-size: 12px; color: #909399;
+  font-size: 12px; color: var(--app-text-secondary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px;
 }
 .status-now-cell {
@@ -260,29 +260,30 @@ onMounted(load)
 .status-now-cell .status-track {
   display: flex; align-items: center; gap: 3px; font-size: 12px;
 }
-.status-now-cell .track-arrow { color: #909399; }
+.status-now-cell .track-arrow { color: var(--app-text-muted); }
 .status-now-cell .track-to {
-  font-size: 11px; color: #909399; font-weight: 500;
+  font-size: 11px; color: var(--app-text-secondary); font-weight: 500;
 }
-.status-duration { font-weight: 600; color: #303133; font-variant-numeric: tabular-nums; }
-.status-duration.danger { color: #f56c6c; }
+.status-duration { font-weight: 600; color: var(--app-text-primary); font-variant-numeric: tabular-nums; }
+.status-duration.danger { color: var(--app-danger); }
 .reason-row {
   display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
   line-height: 1.4;
 }
 .reason-row .reason {
-  font-size: 12px; color: #606266;
-  background: #ecf5ff; color: #409eff;
+  font-size: 12px;
+  background: var(--app-primary-light);
+  color: var(--app-primary);
   border-radius: 3px; padding: 1px 6px; font-weight: 500;
 }
 .reason-row .op {
-  font-size: 12px; color: #606266;
+  font-size: 12px; color: var(--app-text-regular);
 }
 .detail-row {
   margin-top: 3px;
-  font-size: 12px; color: #909399;
+  font-size: 12px; color: var(--app-text-secondary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px;
 }
-.muted { color: #c0c4cc; font-size: 12px; }
-.tip-text { margin-top: 8px; color: #909399; font-size: 12px; }
+.muted { color: var(--app-text-muted); font-size: 12px; }
+.tip-text { margin-top: 8px; color: var(--app-text-secondary); font-size: 12px; }
 </style>

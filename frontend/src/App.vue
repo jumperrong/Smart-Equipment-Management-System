@@ -12,7 +12,7 @@ html, body, #app {
   padding: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  background: #f5f7fa;
-  color: #303133;
+  background: var(--app-page-bg);
+  color: var(--app-text-primary);
 }
 </style>

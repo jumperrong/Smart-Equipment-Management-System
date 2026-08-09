@@ -1,0 +1,227 @@
+/* ============================================================
+ * SEMS 双皮肤主题系统
+ *   方案 B 极简青绿（明色）—— :root 默认
+ *   方案 C 暗色霓虹（暗色）—— html.dark
+ * 自动跟随系统：useTheme.js 根据 prefers-color-scheme 切换 html.dark
+ * ============================================================ */
+
+/* ---------- 方案 B：极简青绿（明色）---------- */
+:root {
+  /* 品牌主色：翡翠绿 */
+  --app-primary:        #10B981;
+  --app-primary-light:  #D1FAE5;
+  --app-primary-dark:   #059669;
+
+  /* 侧栏（极简白底） */
+  --app-sidebar-bg:     #FFFFFF;
+  --app-sidebar-text:   #475569;
+  --app-sidebar-active: #10B981;
+  --app-sidebar-hover:  #F1F5F9;
+  --app-sidebar-border: #E2E8F0;
+  --app-sidebar-scroll:  #CBD5E1;
+
+  /* 顶栏 */
+  --app-header-bg:      #FFFFFF;
+  --app-header-text:    #1E293B;
+  --app-header-border:  #E2E8F0;
+
+  /* 页面背景 */
+  --app-page-bg:        #F8FAFC;
+  --app-card-bg:        #FFFFFF;
+  --app-card-border:    #E2E8F0;
+
+  /* 文字 */
+  --app-text-primary:   #1E293B;
+  --app-text-regular:   #475569;
+  --app-text-secondary: #64748B;
+  --app-text-placeholder:#94A3B8;
+  --app-text-muted:     #94A3B8;
+
+  /* 边框/分隔线 */
+  --app-border:         #E2E8F0;
+  --app-border-light:   #F1F5F9;
+  --app-divider:        #E2E8F0;
+
+  /* 状态色 */
+  --app-success:        #10B981;
+  --app-warning:        #F59E0B;
+  --app-danger:         #EF4444;
+  --app-info:           #64748B;
+
+  /* 状态背景（浅底） */
+  --app-success-bg:     #ECFDF5;
+  --app-warning-bg:     #FFFBEB;
+  --app-danger-bg:      #FEF2F2;
+  --app-info-bg:        #F1F5F9;
+
+  /* 阴影 */
+  --app-shadow:         0 1px 3px rgba(0,0,0,0.06);
+  --app-shadow-hover:   0 4px 12px rgba(0,0,0,0.10);
+
+  /* 登录页渐变 */
+  --app-login-grad:     linear-gradient(135deg, #059669 0%, #10B981 50%, #34D399 100%);
+
+  /* ---- 覆盖 Element Plus 主题变量 ---- */
+  --el-color-primary:             #10B981;
+  --el-color-primary-light-3:     #58CEA7;
+  --el-color-primary-light-5:     #88DCC0;
+  --el-color-primary-light-7:     #B7EAD9;
+  --el-color-primary-light-8:     #CFF1E6;
+  --el-color-primary-light-9:     #E7F8F2;
+  --el-color-primary-dark-2:      #0D9467;
+  --el-color-success:             #10B981;
+  --el-color-success-light-3:     #58CEA7;
+  --el-color-success-light-5:     #88DCC0;
+  --el-color-success-light-7:     #B7EAD9;
+  --el-color-success-light-8:     #CFF1E6;
+  --el-color-success-light-9:     #E7F8F2;
+  --el-color-warning:              #F59E0B;
+  --el-color-danger:              #EF4444;
+  --el-color-info:                #64748B;
+  --el-bg-color:                  #FFFFFF;
+  --el-bg-color-page:             #F8FAFC;
+  --el-bg-color-overlay:          #FFFFFF;
+  --el-text-color-primary:        #1E293B;
+  --el-text-color-regular:        #475569;
+  --el-text-color-secondary:      #64748B;
+  --el-text-color-placeholder:    #94A3B8;
+  --el-border-color:              #E2E8F0;
+  --el-border-color-light:        #E2E8F0;
+  --el-border-color-lighter:      #F1F5F9;
+  --el-border-color-extra-light:  #F8FAFC;
+  --el-fill-color:                #F1F5F9;
+  --el-fill-color-light:          #F8FAFC;
+  --el-fill-color-lighter:        #F1F5F9;
+  --el-fill-color-blank:          #FFFFFF;
+  --el-menu-bg-color:             #FFFFFF;
+  --el-menu-text-color:           #475569;
+  --el-menu-active-color:         #10B981;
+  --el-menu-hover-bg-color:       #F1F5F9;
+}
+
+/* ---------- 方案 C：暗色霓虹（暗色）---------- */
+html.dark {
+  /* 品牌主色：霓虹青 */
+  --app-primary:        #22D3EE;
+  --app-primary-light:  rgba(34, 211, 238, 0.15);
+  --app-primary-dark:   #06B6D4;
+
+  /* 侧栏（深空蓝黑） */
+  --app-sidebar-bg:     #0B1220;
+  --app-sidebar-text:   #94A3B8;
+  --app-sidebar-active: #22D3EE;
+  --app-sidebar-hover:  rgba(34, 211, 238, 0.08);
+  --app-sidebar-border: #1E293B;
+  --app-sidebar-scroll:  #334155;
+
+  /* 顶栏 */
+  --app-header-bg:      #0F172A;
+  --app-header-text:    #F1F5F9;
+  --app-header-border:  #1E293B;
+
+  /* 页面背景 */
+  --app-page-bg:        #0F172A;
+  --app-card-bg:        #1E293B;
+  --app-card-border:    #334155;
+
+  /* 文字 */
+  --app-text-primary:   #F1F5F9;
+  --app-text-regular:   #CBD5E1;
+  --app-text-secondary: #94A3B8;
+  --app-text-placeholder:#64748B;
+  --app-text-muted:     #64748B;
+
+  /* 边框/分隔线 */
+  --app-border:         #334155;
+  --app-border-light:   #1E293B;
+  --app-divider:        #334155;
+
+  /* 状态色（暗色下提高亮度） */
+  --app-success:        #34D399;
+  --app-warning:        #FBBF24;
+  --app-danger:         #F87171;
+  --app-info:           #94A3B8;
+
+  /* 状态背景（暗色半透明底） */
+  --app-success-bg:     rgba(52, 211, 153, 0.12);
+  --app-warning-bg:     rgba(251, 191, 36, 0.12);
+  --app-danger-bg:      rgba(248, 113, 113, 0.12);
+  --app-info-bg:        rgba(148, 163, 184, 0.12);
+
+  /* 阴影（暗色下更柔和） */
+  --app-shadow:         0 1px 3px rgba(0,0,0,0.30);
+  --app-shadow-hover:   0 4px 12px rgba(0,0,0,0.40);
+
+  /* 登录页渐变（暗色科技风） */
+  --app-login-grad:     linear-gradient(135deg, #0B1220 0%, #0F172A 40%, #0E7490 100%);
+
+  /* 霓虹发光效果 */
+  --app-glow-primary:   0 0 12px rgba(34, 211, 238, 0.35);
+
+  /* ---- 覆盖 Element Plus 暗色变量 ---- */
+  --el-color-primary:             #22D3EE;
+  --el-color-primary-light-3:     #64E0F3;
+  --el-color-primary-light-5:     #91E9F7;
+  --el-color-primary-light-7:     #BDF2FA;
+  --el-color-primary-light-8:     #D3F6FC;
+  --el-color-primary-light-9:     #E9FBFD;
+  --el-color-primary-dark-2:      #06B6D4;
+  --el-color-success:             #34D399;
+  --el-color-warning:             #FBBF24;
+  --el-color-danger:              #F87171;
+  --el-color-info:                #94A3B8;
+  --el-bg-color:                  #1E293B;
+  --el-bg-color-page:             #0F172A;
+  --el-bg-color-overlay:          #1E293B;
+  --el-text-color-primary:        #F1F5F9;
+  --el-text-color-regular:        #CBD5E1;
+  --el-text-color-secondary:      #94A3B8;
+  --el-text-color-placeholder:    #64748B;
+  --el-border-color:              #334155;
+  --el-border-color-light:        #334155;
+  --el-border-color-lighter:      #1E293B;
+  --el-border-color-extra-light:  #0F172A;
+  --el-fill-color:                #1E293B;
+  --el-fill-color-light:          #0F172A;
+  --el-fill-color-lighter:        #1E293B;
+  --el-fill-color-blank:          #1E293B;
+  --el-menu-bg-color:             #0B1220;
+  --el-menu-text-color:           #94A3B8;
+  --el-menu-active-color:         #22D3EE;
+  --el-menu-hover-bg-color:       rgba(34, 211, 238, 0.08);
+
+  /* 暗色模式下表格条纹/悬停色 */
+  --el-table-bg-color:            #1E293B;
+  --el-table-tr-bg-color:         #1E293B;
+  --el-table-row-hover-bg-color:  #283548;
+  --el-table-current-row-bg-color: rgba(34, 211, 238, 0.06);
+  --el-table-border-color:       #334155;
+  --el-table-header-bg-color:    #182338;
+  --el-table-header-text-color:   #CBD5E1;
+  --el-table-fixed-box-shadow:   -8px 0 8px -4px rgba(0,0,0,0.3);
+
+  /* 暗色模式卡片/输入框 */
+  --el-card-bg-color:             #1E293B;
+  --el-input-bg-color:            #0F172A;
+  --el-input-border-color:        #334155;
+  --el-input-text-color:          #F1F5F9;
+  --el-input-placeholder-color:   #64748B;
+  --el-dialog-bg-color:           #1E293B;
+  --el-dropdown-menu-bg-color:    #1E293B;
+  --el-tag-bg-color:              #283548;
+}
+
+/* 全局 color-scheme 让浏览器原生控件（滚动条/表单）也跟随 */
+:root        { color-scheme: light; }
+html.dark    { color-scheme: dark; }
+
+/* 平滑过渡 */
+html {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+html.dark .el-card,
+html.dark .el-table,
+html.dark .el-input__wrapper,
+html.dark .el-menu {
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}

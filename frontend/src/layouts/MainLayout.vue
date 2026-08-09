@@ -2,7 +2,7 @@
   <el-container class="main-layout">
     <el-aside :width="isCollapse ? '64px' : '220px'" class="aside">
       <div class="logo">
-        <el-icon :size="22" color="#409eff"><Cpu /></el-icon>
+        <el-icon :size="22" class="logo-icon"><Cpu /></el-icon>
         <span v-show="!isCollapse" class="logo-text">SEMS 设备管理</span>
       </div>
       <el-menu
@@ -10,9 +10,6 @@
         :collapse="isCollapse"
         router
         class="side-menu"
-        background-color="#001529"
-        text-color="#b8c4cf"
-        active-text-color="#409eff"
       >
         <template v-for="r in menuRoutes" :key="r.path">
           <el-menu-item :index="r.path">
@@ -32,9 +29,30 @@
           <span class="crumb">{{ currentTitle }}</span>
         </div>
         <div class="right">
+          <!-- 主题切换：明 / 暗 / 自动 -->
+          <el-dropdown @command="onThemeCommand" trigger="click">
+            <el-button text class="theme-btn">
+              <el-icon :size="18"><component :is="modeIcon" /></el-icon>
+              <span class="theme-label">{{ modeLabel }}</span>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="light" :class="{ 'is-active': mode === 'light' }">
+                  <el-icon><Sunny /></el-icon>&nbsp;明色青绿
+                </el-dropdown-item>
+                <el-dropdown-item command="dark" :class="{ 'is-active': mode === 'dark' }">
+                  <el-icon><Moon /></el-icon>&nbsp;暗色霓虹
+                </el-dropdown-item>
+                <el-dropdown-item command="auto" :class="{ 'is-active': mode === 'auto' }" divided>
+                  <el-icon><Monitor /></el-icon>&nbsp;跟随系统
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+
           <el-dropdown @command="onCommand">
             <span class="user-info">
-              <el-avatar :size="32" style="background:#409eff">{{ avatarChar }}</el-avatar>
+              <el-avatar :size="32" class="user-avatar">{{ avatarChar }}</el-avatar>
               <span class="name">{{ userStore.fullName || '未登录' }}</span>
               <el-tag :type="roleTagType(userStore.role)" size="small" effect="dark">{{ roleLabel(userStore.role) }}</el-tag>
               <el-icon><ArrowDown /></el-icon>
@@ -66,11 +84,18 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores'
 import router from '@/router'
+import useTheme from '@/composables/useTheme'
 
 const isCollapse = ref(false)
 const routerObj = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+
+const { mode, modeLabel, modeIcon, setMode } = useTheme()
+
+function onThemeCommand(cmd) {
+  setMode(cmd)
+}
 
 const menuRoutes = computed(() => {
   const children = router.options.routes.find((r) => r.path === '/')?.children || []
@@ -108,11 +133,12 @@ function onCommand(cmd) {
   height: 100%;
 }
 .aside {
-  background: #001529;
-  transition: width 0.2s;
+  background: var(--app-sidebar-bg);
+  transition: width 0.2s, background 0.3s;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  border-right: 1px solid var(--app-sidebar-border);
 }
 .logo {
   height: 60px;
@@ -121,20 +147,24 @@ function onCommand(cmd) {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: #fff;
-  border-bottom: 1px solid #0b2a45;
+  color: var(--app-text-primary);
+  border-bottom: 1px solid var(--app-sidebar-border);
+}
+.logo-icon {
+  color: var(--app-primary);
 }
 .side-menu {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
   border-right: none;
+  background: var(--app-sidebar-bg);
 }
 .side-menu::-webkit-scrollbar {
   width: 6px;
 }
 .side-menu::-webkit-scrollbar-thumb {
-  background: #2a3f52;
+  background: var(--app-sidebar-scroll);
   border-radius: 3px;
 }
 .side-menu::-webkit-scrollbar-track {
@@ -144,28 +174,63 @@ function onCommand(cmd) {
   font-weight: 600;
   font-size: 16px;
   white-space: nowrap;
+  color: var(--app-text-primary);
 }
 .header {
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
+  background: var(--app-header-bg);
+  border-bottom: 1px solid var(--app-header-border);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
+  transition: background 0.3s, border-color 0.3s;
 }
 .left { display: flex; align-items: center; gap: 14px; }
-.crumb { font-size: 16px; font-weight: 500; color: #303133; }
+.crumb { font-size: 16px; font-weight: 500; color: var(--app-header-text); }
+.right { display: flex; align-items: center; gap: 16px; }
+.theme-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--app-text-secondary);
+}
+.theme-label {
+  font-size: 13px;
+}
+.theme-btn:hover {
+  color: var(--app-primary);
+}
 .right .user-info {
   display: flex; align-items: center; gap: 10px; cursor: pointer;
 }
-.right .name { color: #303133; font-weight: 500;
+.user-avatar {
+  background: var(--app-primary);
+  color: #fff;
 }
+.right .name { color: var(--app-header-text); font-weight: 500; }
 .main-body {
   padding: 18px;
-  background: #f5f7fa;
-  overflow: #f5f7fa;
+  background: var(--app-page-bg);
+  overflow: auto;
+  transition: background 0.3s;
 }
 .fade-enter-active, .fade-leave-active { transition: opacity 0.15s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
-:deep(.el-menu) { border-right: none; }
+:deep(.el-menu) {
+  border-right: none;
+  background: var(--app-sidebar-bg);
+}
+:deep(.el-menu-item) {
+  color: var(--app-sidebar-text);
+}
+:deep(.el-menu-item:hover) {
+  background: var(--app-sidebar-hover);
+}
+:deep(.el-menu-item.is-active) {
+  color: var(--app-sidebar-active);
+}
+/* 暗色模式选中项霓虹发光 */
+html.dark :deep(.el-menu-item.is-active) {
+  text-shadow: var(--app-glow-primary);
+}
 </style>
