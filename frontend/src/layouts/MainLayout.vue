@@ -108,8 +108,8 @@ const currentTitle = computed(() => route.meta.title || '')
 
 const avatarChar = computed(() => (userStore.fullName || 'U').charAt(0).toUpperCase())
 
-const roleLabel = (r) => ({ admin: '管理员', engineer: '工程师', process_engineer: '工艺员', operator: '操作员', viewer: '查看' }[r] || r)
-const roleTagType = (r) => ({ admin: 'danger', engineer: 'primary', process_engineer: 'warning', operator: 'success', viewer: 'info' }[r] || 'info')
+const roleLabel = (r) => ({ admin: '管理员', engineer: '工程师', process_engineer: '工艺员', qa: 'QA审核员', operator: '操作员', viewer: '查看' }[r] || r)
+const roleTagType = (r) => ({ admin: 'danger', engineer: 'primary', process_engineer: 'warning', qa: 'danger', operator: 'success', viewer: 'info' }[r] || 'info')
 
 function onCommand(cmd) {
   if (cmd === 'change-password') {

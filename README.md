@@ -17,6 +17,7 @@ Semiconductor Equipment Management System
 - **关键词检索**：工单支持标题/描述/现象关键词检索（例：搜「漏真空」可命中所有包含该词的工单）。
 - **局域网安全加固**：密码策略、账户锁定、JWT 访问+刷新令牌、敏感操作审计、强制首次改密、CSP/X-Frame 响应头（见「安全加固」章节）。
 - **低成本灾备（3-2-1）**：备份加密、NAS/SMB 异地副本、烟雾还原测试、系统级旁路 cron/任务计划备份脚本（见「灾备方案」章节）。
+- **📑 文控系统（符合体系标准）**：三级电子签名审批链（编制→审核→批准）+ SHA256 签名指纹、状态机白名单（草稿→审核中→生效→作废）、文档编号规则、修订记录（字段级 before/after）、分发收回台账、PDF 水印受控章、表单审核锁定 + 附加修正、复审周期告警、QA 角色权限矩阵（见「文控系统」章节）。
 
 ---
 
@@ -30,7 +31,8 @@ Semiconductor Equipment Management System
 | 工单管理 | 工单创建与跟踪、**紧急度标签、持续时长、关键词检索**；REPAIR 工单可由 DOWN 状态自动触发 |
 | PM 维护计划 | 周期性 PM 计划（周/双周/月/季度）、执行记录 |
 | 备件管理 | 备件库存、出入库流水、设备易损件清单 |
-| 工艺文件 | 指导性文件版本管理 + **作业记录结构化表单（模板定义→动态填写→归档→导出 JSON/CSV）** |
+| 工艺文件 | 指导性文件版本管理 + **作业记录结构化表单（模板定义→动态填写→归档→导出 JSON/CSV）** + **文控审批链 / 修订 / 分发 / 水印 / 复审** |
+| **文控系统** | **三级电子签名审批链（编制→审核→批准）、状态机白名单、文档编号规则、修订记录、分发收回、PDF 水印受控章、表单审核锁定 + 附加修正、复审告警、QA 角色权限** |
 | OEE 分析 | 设备综合效率统计 |
 | 品管工具 | 8D / FMEA |
 | 环境核查 | 环境参数日志 |
@@ -802,6 +804,91 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 | GET | `/api/v1/form-records/{id}/export/{format}` | 导出 JSON / CSV |
 
 相关代码：[models/__init__.py](file:///workspace/backend/app/models/__init__.py)（FormTemplate / FormRecord / FormRecordValue）· [api/v1/form_templates.py](file:///workspace/backend/app/api/v1/form_templates.py) · [api/v1/form_records.py](file:///workspace/backend/app/api/v1/form_records.py) · [views/FormTemplates.vue](file:///workspace/frontend/src/views/FormTemplates.vue) · [views/ProcessDocuments.vue](file:///workspace/frontend/src/views/ProcessDocuments.vue)
+
+---
+
+## 📑 文控系统（符合体系标准）
+
+基于现有工艺文件 + 表单模板模块扩展，实现符合质量体系标准的文档控制能力。核心设计原则：**文档编码由用户在系统中手动编辑**（非系统自动生成），系统负责审批链、修订记录、分发收回、受控章等合规控制。
+
+### 审批流程（三级电子签名）
+
+```
+草稿 ──prepare──→ 审核中 ──review──→ 审核通过 ──approve──→ 生效
+  ↑                  │                  │                    │
+  │                  │                  ├──reject──→ 草稿     │
+  └──reject──────────┘                  └──reject──→ 草稿     │
+                                                          生效→作废 (终态)
+```
+
+| 阶段 | stage | 权限点 | 允许角色 | 状态变更 |
+|------|-------|--------|---------|---------|
+| ① 编制提交 | `prepare` | `process_doc.submit_review` | admin、process_engineer | 草稿 → 审核中 |
+| ② 审核通过 | `review` | `process_doc.approve` | admin、qa | 不变（仅记录通过） |
+| ③ 批准生效 | `approve` | `process_doc.approve` | admin、qa | 审核中 → 生效 |
+
+**电子签名机制**：每次签署需二次密码校验 → 生成 SHA256 签名指纹（含 doc_id / stage / signer_id / signed_at / comment / password_validated）→ 前端展示签名后 8 位。
+
+**状态机白名单**：
+
+| 流转 | 合法 |
+|------|:---:|
+| 草稿 → 审核中 | ✅ |
+| 草稿 → 生效 | ✅ |
+| 草稿 → 作废 | ✅ |
+| 审核中 → 生效 | ✅ |
+| 审核中 → 作废 | ✅ |
+| 审核中 → 草稿 | ✅ |
+| 生效 → 作废 | ✅ |
+| 作废 → 生效 | ❌ 拦截 |
+
+**生效副作用**：自动写入 `effective_date`，按 `review_cycle_month`（月）计算 `next_review_date`，同组旧生效版自动作废。
+
+### 权限矩阵
+
+| 权限点 | admin | process_engineer | qa | engineer | operator |
+|--------|:---:|:---:|:---:|:---:|:---:|
+| 上传/创建草稿 (`process_doc.create`) | ✅ | ✅ | - | - | - |
+| 提交审核 (`process_doc.submit_review`) | ✅ | ✅ | - | - | - |
+| 审核/批准 (`process_doc.approve`) | ✅ | - | ✅ | - | - |
+| 作废 (`process_doc.void`) | ✅ | - | ✅ | - | - |
+| 只看生效版 (`process_doc.view_effective`) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 查看全部版本 (`process_doc.view_all_versions`) | ✅ | ✅ | ✅ | ✅ | - |
+| 表单审核 (`form_record.audit`) | ✅ | - | ✅ | - | - |
+| 附加修正 (`form_record.amend`) | ✅ | - | ✅ | - | - |
+
+### 功能模块
+
+| 模块 | 说明 |
+|------|------|
+| **文档编号规则** | `DocNoRule` 模型定义各分类编号格式（前缀/分隔符/年份/序号位数）；管理员在系统中编辑文档编码 |
+| **审批链** | 三级签署（prepare/review/approve）+ 驳回路径（reject_prepare/reject_review）；防重复审核；批准前置条件校验 |
+| **修订记录** | 记录变更原因、摘要、明细项（字段级 before/after 对比） |
+| **分发收回** | 批量创建分发记录（USER/DEPT），支持批量收回 + 备注；分发台账可追溯 |
+| **PDF 水印受控章** | 下载 PDF 自动加盖受控章（文档编号 + 状态 + 用户信息 + 日期） |
+| **表单审核锁定** | 已审核表单禁止原地修改，返回 400 提示走附加修正 |
+| **附加修正** | PENDING → APPROVED 流转；需密码二次校验；记录原值/修正值/原因 |
+| **复审告警** | 按 `next_review_date` 查询 30 天内到期 / 已过期文档；前端 Badge 红色告警 |
+
+### API 端点
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/process-doc-qc/approvals/sign` | 电子签名签署（prepare/review/approve/reject_*） |
+| GET | `/api/v1/process-doc-qc/documents/{id}/approvals` | 审批链列表 |
+| GET | `/api/v1/process-doc-qc/documents/{id}/change-logs` | 修订记录列表 |
+| POST | `/api/v1/process-doc-qc/documents/{id}/change-logs` | 创建修订记录 |
+| GET | `/api/v1/process-doc-qc/documents/{id}/distributions` | 分发记录列表 |
+| POST | `/api/v1/process-doc-qc/documents/{id}/distributions` | 创建分发记录 |
+| POST | `/api/v1/process-doc-qc/distributions/revoke` | 批量收回分发 |
+| GET | `/api/v1/process-doc-qc/review-alerts` | 复审告警统计 |
+| POST | `/api/v1/form-record-qc/records/{id}/audit` | 表单审核 |
+| GET | `/api/v1/form-record-qc/records/{id}/amendments` | 附加修正列表 |
+| POST | `/api/v1/form-record-qc/records/{id}/amendments` | 创建附加修正 |
+| POST | `/api/v1/form-record-qc/amendments/{id}/approve` | 审批附加修正 |
+| GET/POST/PUT/DELETE | `/api/v1/doc-no-rules` | 文档编号规则 CRUD |
+
+相关代码：[models/__init__.py](file:///workspace/backend/app/models/__init__.py)（DocNoRule / DocumentApproval / DocumentChangeLog / DocumentDistribution / FormRecordAmendment）· [api/v1/process_doc_qc.py](file:///workspace/backend/app/api/v1/process_doc_qc.py) · [api/v1/form_record_qc.py](file:///workspace/backend/app/api/v1/form_record_qc.py) · [services/pdf_watermark.py](file:///workspace/backend/app/services/pdf_watermark.py) · [views/ProcessDocuments.vue](file:///workspace/frontend/src/views/ProcessDocuments.vue)
 
 ---
 

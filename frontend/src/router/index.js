@@ -123,6 +123,12 @@ const routes = [
         component: () => import('@/views/SystemConfig.vue'),
         meta: { title: '系统配置', icon: 'Setting', roles: ['admin'] },
       },
+      {
+        path: 'doc-no-rules',
+        name: 'DocNoRules',
+        component: () => import('@/views/DocNoRules.vue'),
+        meta: { title: '文档编号规则', icon: 'Postcard', roles: ['admin'] },
+      },
     ],
   },
 ]

@@ -13,6 +13,7 @@ class UserRole(str, Enum):
     ADMIN = "admin"
     ENGINEER = "engineer"
     PROCESS_ENGINEER = "process_engineer"
+    QA = "qa"
     OPERATOR = "operator"
     VIEWER = "viewer"
 
@@ -800,6 +801,8 @@ class ProcessDocument(Base):
     id = Column(Integer, primary_key=True, index=True)
     equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
     category = Column(String(16), default="guide", nullable=False, server_default=text("'guide'"), comment="大类: guide指导性/record作业记录")
+    doc_no = Column(String(128), nullable=True, index=True, comment="文档编号(用户手动编辑，体系文控用)")
+    doc_class = Column(String(16), nullable=True, comment="文控一级分类: SOP/SIP/SPEC/FORM/RECORD/EXTERN")
     doc_name = Column(String(255), nullable=False, comment="文件名称")
     doc_type = Column(String(64), nullable=True, comment="类型: 指导性-Recipe/Flowchart/Spec/其他; 作业记录-BatchRecord/ParamLog/InspectionRecord/ShiftHandover/其他")
     version = Column(String(64), nullable=True, comment="版本号(显示用)")
@@ -808,6 +811,8 @@ class ProcessDocument(Base):
     is_latest = Column(Boolean, default=True, nullable=False, server_default=text("1"), comment="是否最新版本")
     status = Column(String(32), default="草稿", nullable=False, comment="草稿/生效/作废")
     effective_date = Column(DateTime, nullable=True, comment="生效日期")
+    review_cycle_month = Column(Integer, nullable=True, comment="复审周期(月)；NULL=不需要定期复审")
+    next_review_date = Column(DateTime, nullable=True, comment="下次复审日期（生效时按 effective_date+cycle 自动计算）")
     # 作业记录专属字段（指导性文件可为空）
     batch_no = Column(String(64), nullable=True, index=True, comment="作业记录-批号")
     shift = Column(String(16), nullable=True, comment="作业记录-班次: A/B/C")
@@ -818,11 +823,119 @@ class ProcessDocument(Base):
     description = Column(String(500), nullable=True, comment="说明")
     uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     form_record_id = Column(Integer, ForeignKey("form_records.id", ondelete="SET NULL"), nullable=True, index=True, comment="关联的结构化表单记录(基于模板生成)")
+
+    # —— 外来文件字段（阶段 3）：doc_class=EXTERN 时使用
+    source_type = Column(String(16), nullable=True, comment="来源类型: CUSTOMER客户/HQ总部/REGULATION法规/VENDOR设备商/INTERNAL内部")
+    source_ref_no = Column(String(128), nullable=True, comment="外部来源文件编号")
+    received_date = Column(DateTime, nullable=True, comment="接收日期")
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     equipment = relationship("Equipment", back_populates="process_documents")
     form_record = relationship("FormRecord", back_populates="process_documents")
+    approvals = relationship("DocumentApproval", back_populates="process_document", cascade="all, delete-orphan", order_by="DocumentApproval.stage_order.asc(), DocumentApproval.signed_at.asc()")
+    change_logs = relationship("DocumentChangeLog", back_populates="process_document", cascade="all, delete-orphan", order_by="DocumentChangeLog.created_at.desc()")
+    distributions = relationship("DocumentDistribution", back_populates="process_document", cascade="all, delete-orphan")
+
+
+# ============ 模块 K2: 文档编号规则（体系文控用） ============
+# 管理员在此定义各文控分类（SOP/SIP/SPEC/FORM/RECORD/EXTERN）的编号格式，
+# 系统根据规则自动生成文档编号。编号格式：
+#   {prefix}[-{year}][-{month}][-{equipment_code}]-{seq:0{seq_width}d}
+# 例：SOP-2026-001 / SIP-ET-001 / FORM-B202608-0001
+
+class DocNoRule(Base):
+    """文档编号规则（每个文控分类一条）。
+
+    生成编号时从 next_seq 取值并自增；
+    编号格式由 prefix / use_year / use_month / use_equipment_code / seq_width 组合决定。
+    """
+    __tablename__ = "doc_no_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    doc_class = Column(String(16), unique=True, nullable=False, index=True, comment="文控分类: SOP/SIP/SPEC/FORM/RECORD/EXTERN")
+    prefix = Column(String(16), nullable=False, comment="编号前缀，如 SOP/SIP/SPEC")
+    use_equipment_code = Column(Boolean, default=False, nullable=False, server_default=text("0"), comment="是否包含机台资产编号")
+    use_year = Column(Boolean, default=True, nullable=False, server_default=text("1"), comment="是否包含年份")
+    use_month = Column(Boolean, default=False, nullable=False, server_default=text("0"), comment="是否包含月份")
+    seq_width = Column(Integer, default=3, nullable=False, comment="流水号位数(3=001, 4=0001)")
+    next_seq = Column(Integer, default=1, nullable=False, server_default=text("1"), comment="下一个待分配流水号")
+    is_active = Column(Boolean, default=True, nullable=False, server_default=text("1"), index=True)
+    description = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ============ 模块 K3: 文档审批链（DocumentApproval）========
+# 每条 process_document_version 可有 0~多条审批记录，
+# 阶段 stage = 'prepare'（编制签名） / 'review'（审核） / 'approve'（批准）。
+# 每个阶段保存：签署人、签署时角色、签署时间、签署时二次密码校验结果、签名 hash。
+
+class DocumentApproval(Base):
+    __tablename__ = "document_approvals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    process_document_id = Column(Integer, ForeignKey("process_documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage = Column(String(16), nullable=False, comment="prepare/review/approve")
+    stage_order = Column(Integer, default=1, nullable=False, comment="审批顺序号(1=编制 2=审核 3=批准)")
+    result = Column(String(16), nullable=False, comment="approved/rejected")
+    comment = Column(String(500), nullable=True)
+
+    signer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    signer_username = Column(String(64), nullable=False, comment="快照：签署时用户名")
+    signer_display_name = Column(String(64), nullable=True, comment="快照：签署时显示名")
+    signer_role = Column(String(32), nullable=True, comment="快照：签署时角色")
+    signed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # 电子签名指纹：SHA256(doc_id|stage|signer_id|signed_at|comment|password_validated)
+    signature = Column(String(128), nullable=False)
+    password_validated = Column(Boolean, default=False, nullable=False, comment="签署时是否二次校验密码（体系合规要求=TRUE）")
+
+    process_document = relationship("ProcessDocument", back_populates="approvals")
+
+
+# ============ 模块 K4: 结构化修订记录 =========
+# 每次发布新版本 / 作废 / 上传新版本时，记录逐条变更点。
+# 审核员可核对每个变更点的影响评估。
+
+class DocumentChangeLog(Base):
+    __tablename__ = "document_change_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    process_document_id = Column(Integer, ForeignKey("process_documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    change_reason = Column(String(32), nullable=False, comment="NEW/REV_VOID/REV_SPEC/REV_STEP/ENG_CHG/QC_NC/CUSTOMER")
+    change_summary = Column(String(500), nullable=False, comment="总体变更摘要")
+    detail_items_json = Column(JSON, nullable=True, comment="逐行变更项列表：[{seq,change_type:A/M/D,page,before,after,impact}]")
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_by_username = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    process_document = relationship("ProcessDocument", back_populates="change_logs")
+
+
+# ============ 模块 K5: 文件分发/作废收回记录 =========
+# 电子文件发放给谁（按用户/部门/角色），作废时收回勾选。
+# 纸质文件份数统计。
+
+class DocumentDistribution(Base):
+    __tablename__ = "document_distributions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    process_document_id = Column(Integer, ForeignKey("process_documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    recipient_type = Column(String(16), nullable=False, comment="USER/ROLE/DEPARTMENT")
+    recipient_ref = Column(String(64), nullable=False, comment="用户名/角色名/部门名")
+    hold_copies = Column(Integer, default=1, nullable=False, comment="持有份数(电子=1, 纸质可多)")
+    medium = Column(String(8), default="E", nullable=False, comment="E=电子 P=纸质")
+    issued_at = Column(DateTime, default=datetime.utcnow)
+    issued_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    returned = Column(Boolean, default=False, nullable=False, comment="作废/换新时是否已收回")
+    returned_at = Column(DateTime, nullable=True)
+    returned_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    return_note = Column(String(255), nullable=True)
+
+    process_document = relationship("ProcessDocument", back_populates="distributions")
 
 
 # ============ 模块 L: 用户自定义表单模板与结构化表单记录 ============
@@ -880,6 +993,9 @@ class FormRecord(Base):
     """按模板填写生成的结构化表单记录。
 
     可与 ProcessDocument (category=record) 通过 process_documents.form_record_id 双向关联。
+    文控扩展：状态流转 草稿 → 已提交 → 已审核/已作废
+    - 已提交：提交人签 prepare
+    - 已审核：审核人签 approve，记录锁定后禁止原地修改，只能走 Amendment
     """
     __tablename__ = "form_records"
 
@@ -890,16 +1006,23 @@ class FormRecord(Base):
     batch_no = Column(String(64), nullable=True, index=True, comment="批号(作业记录类)")
     shift = Column(String(16), nullable=True, comment="班次: A/B/C")
     production_date = Column(DateTime, nullable=True, comment="生产日期")
-    status = Column(String(16), default="草稿", nullable=False, index=True, comment="草稿/已提交/已作废")
+    status = Column(String(16), default="草稿", nullable=False, index=True, comment="草稿/已提交/已审核/已作废")
     remark = Column(String(500), nullable=True)
     filled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     submitted_at = Column(DateTime, nullable=True, comment="提交时间")
+    submitted_by = Column(Integer, ForeignKey("users.id"), nullable=True, comment="提交人（通常=filled_by）")
+    audited = Column(Boolean, default=False, nullable=False, server_default=text("0"), index=True, comment="文控审核：审核后记录锁定")
+    audited_at = Column(DateTime, nullable=True, comment="审核通过时间")
+    audited_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    audit_signature = Column(String(128), nullable=True, comment="审核电子签名(SHA256 指纹)")
+    audit_password_validated = Column(Boolean, default=False, nullable=False, server_default=text("0"), comment="审核时是否二次校验密码")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     template = relationship("FormTemplate", back_populates="records")
     values = relationship("FormRecordValue", back_populates="record", cascade="all, delete-orphan")
     process_documents = relationship("ProcessDocument", back_populates="form_record")
+    amendments = relationship("FormRecordAmendment", back_populates="record", cascade="all, delete-orphan", order_by="FormRecordAmendment.amended_at.desc()")
 
 
 class FormRecordValue(Base):
@@ -917,3 +1040,32 @@ class FormRecordValue(Base):
     __table_args__ = (
         UniqueConstraint("record_id", "field_key", name="uq_form_record_values_record_field"),
     )
+
+
+class FormRecordAmendment(Base):
+    """已审核记录的附加修正（对应体系要求：记录修改需留痕+原因+签名）。
+
+    不允许修改原有字段值，只能在此追加：改了哪个字段、原值、新值、原因、
+    修改人签名（二次密码校验）、审核人是否批准过修正。
+    """
+    __tablename__ = "form_record_amendments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    record_id = Column(Integer, ForeignKey("form_records.id", ondelete="CASCADE"), nullable=False, index=True)
+    field_key = Column(String(64), nullable=False, comment="被修正字段 key；* 代表备注/附加说明级")
+    field_label = Column(String(255), nullable=True)
+    original_value = Column(JSON, nullable=True)
+    corrected_value = Column(JSON, nullable=True)
+    reason = Column(String(500), nullable=False, comment="修正原因：看错/写错/漏检/客户要求/设备重测…")
+
+    amended_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    amended_by_username = Column(String(64), nullable=False)
+    amended_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    amendment_signature = Column(String(128), nullable=False, comment="修正人电子签名(含密码校验)")
+    password_validated = Column(Boolean, default=False, nullable=False)
+
+    approved = Column(Boolean, nullable=True, comment="审核人批准(可选)；NULL=待批")
+    approved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+
+    record = relationship("FormRecord", back_populates="amendments")

@@ -85,6 +85,7 @@ const roleLabels = {
   admin: '管理员',
   engineer: '工程师',
   process_engineer: '工艺员',
+  qa: 'QA审核员',
   operator: '操作员',
   viewer: '查看者',
 }
@@ -176,6 +177,7 @@ onMounted(loadMatrix)
 .role-head.role-admin { color: #f56c6c; }
 .role-head.role-engineer { color: #409eff; }
 .role-head.role-process_engineer { color: #e6a23c; }
+.role-head.role-qa { color: #9c27b0; }
 .role-head.role-operator { color: #67c23a; }
 .role-head.role-viewer { color: #909399; }
 

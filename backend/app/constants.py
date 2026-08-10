@@ -86,13 +86,21 @@ _FEATURES_DEF = [
     ("system.backup_manage",       "系统备份/恢复",  "系统", ["admin"]),
 
     # 工艺文件
-    ("process_doc.write",          "工艺文件上传/编辑", "工艺文件", ["admin", "process_engineer"]),
-    ("process_doc.delete",         "工艺文件删除",      "工艺文件", ["admin"]),
+    ("process_doc.write",              "工艺文件上传/编辑",     "工艺文件", ["admin", "process_engineer"]),
+    ("process_doc.delete",             "工艺文件删除",          "工艺文件", ["admin"]),
+    ("process_doc.create",             "上传草稿/上传新版本",   "工艺文件", ["admin", "process_engineer"]),
+    ("process_doc.submit_review",      "提交审核（草稿→审核中）", "工艺文件", ["admin", "process_engineer"]),
+    ("process_doc.approve",            "审核/批准（审核中→生效）", "工艺文件", ["admin", "qa"]),
+    ("process_doc.void",               "作废（生效→作废）",      "工艺文件", ["admin", "qa"]),
+    ("process_doc.view_effective",     "只看生效版",            "工艺文件", ["admin", "process_engineer", "qa", "engineer", "operator"]),
+    ("process_doc.view_all_versions",  "查看全部版本/历史版本",  "工艺文件", ["admin", "process_engineer", "qa", "engineer"]),
 
     # 表单模板与结构化记录
-    ("form_template.manage",       "表单模板管理(新增/编辑/删除/停用)", "表单与记录", ["admin", "process_engineer"]),
-    ("form_record.fill",           "结构化表单记录填写与提交",            "表单与记录", ["admin", "engineer", "process_engineer", "operator"]),
-    ("form_record.delete",         "结构化表单记录删除",                  "表单与记录", ["admin"]),
+    ("form_template.manage",       "表单模板管理(新增/编辑/删除/停用)",   "表单与记录", ["admin", "process_engineer"]),
+    ("form_record.fill",           "结构化表单记录填写与提交",              "表单与记录", ["admin", "engineer", "process_engineer", "operator"]),
+    ("form_record.audit",          "结构化表单记录审核（提交后→已审核）",   "表单与记录", ["admin", "qa", "process_engineer"]),
+    ("form_record.amend",          "已审核记录附加修正",                    "表单与记录", ["admin", "qa", "process_engineer", "engineer"]),
+    ("form_record.delete",         "结构化表单记录删除",                    "表单与记录", ["admin"]),
 ]
 
 

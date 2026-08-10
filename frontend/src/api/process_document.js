@@ -20,6 +20,13 @@ export const uploadProcessDocument = (file, meta = {}) => {
   if (meta.shift) form.append('shift', meta.shift)
   if (meta.production_date) form.append('production_date', meta.production_date)
   if (meta.description) form.append('description', meta.description)
+  if (meta.doc_no) form.append('doc_no', meta.doc_no)
+  if (meta.doc_class) form.append('doc_class', meta.doc_class)
+  if (meta.review_cycle_month) form.append('review_cycle_month', meta.review_cycle_month)
+  // 外来文件字段
+  if (meta.source_type) form.append('source_type', meta.source_type)
+  if (meta.source_ref_no) form.append('source_ref_no', meta.source_ref_no)
+  if (meta.received_date) form.append('received_date', meta.received_date)
   return request({
     url: base,
     method: 'post',
@@ -79,7 +86,7 @@ export const createNewVersion = (id, file, meta = {}) => {
 
 // ============ 状态管理 ============
 
-// 状态流转：草稿→生效、草稿→作废、生效→作废
+// 状态流转：草稿→审核中→生效→作废 等
 export const transitionStatus = (id, payload) =>
   request({ url: `${base}/${id}/status`, method: 'patch', data: payload })
 
@@ -96,3 +103,47 @@ export const replaceFile = (id, file) => {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
 }
+
+// ============ 文控扩展：审批链 ============
+
+// 签署电子签名（prepare编制提交审核/review审核/approve批准 + 驳回）
+export const approvalSign = (data) =>
+  request({ url: `${base}/approvals/sign`, method: 'post', data })
+
+// 列出某文档的审批链
+export const listApprovals = (docId) =>
+  request({ url: `${base}/${docId}/approvals`, method: 'get' })
+
+// ============ 文控扩展：修订记录 ============
+
+// 新增修订记录
+export const createChangeLog = (data) =>
+  request({ url: `${base}/change-logs`, method: 'post', data })
+
+// 列出某文档的修订记录
+export const listChangeLogs = (docId) =>
+  request({ url: `${base}/${docId}/change-logs`, method: 'get' })
+
+// ============ 文控扩展：分发记录 ============
+
+// 批量新增分发（支持单条或数组）
+export const createDistributions = (data) =>
+  request({ url: `${base}/distributions`, method: 'post', data })
+
+// 列出某文档的分发记录
+export const listDistributions = (docId) =>
+  request({ url: `${base}/${docId}/distributions`, method: 'get' })
+
+// 批量作废收回分发明细
+export const returnDistributionsBatch = (data) =>
+  request({ url: `${base}/distributions/return-batch`, method: 'post', data })
+
+// 删除单条分发明细
+export const deleteDistribution = (distId) =>
+  request({ url: `${base}/distributions/${distId}`, method: 'delete' })
+
+// ============ 文控扩展：复审告警 ============
+
+// 获取复审到期统计 + 预警列表
+export const reviewAlerts = () =>
+  request({ url: `${base}/review-alerts`, method: 'get' })

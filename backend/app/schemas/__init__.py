@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List
 from datetime import datetime
 
@@ -1025,6 +1025,8 @@ class ProcessDocumentOut(BaseModel):
     id: int
     equipment_id: int
     category: Optional[str] = None
+    doc_no: Optional[str] = None
+    doc_class: Optional[str] = None
     doc_name: str
     doc_type: Optional[str] = None
     version: Optional[str] = None
@@ -1033,6 +1035,8 @@ class ProcessDocumentOut(BaseModel):
     is_latest: Optional[bool] = None
     status: str
     effective_date: Optional[datetime] = None
+    review_cycle_month: Optional[int] = None
+    next_review_date: Optional[datetime] = None
     batch_no: Optional[str] = None
     shift: Optional[str] = None
     production_date: Optional[datetime] = None
@@ -1042,6 +1046,10 @@ class ProcessDocumentOut(BaseModel):
     description: Optional[str] = None
     uploaded_by: Optional[int] = None
     form_record_id: Optional[int] = None
+    # 外来文件字段（doc_class=EXTERN 时使用）
+    source_type: Optional[str] = None
+    source_ref_no: Optional[str] = None
+    received_date: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -1051,6 +1059,8 @@ class ProcessDocumentOut(BaseModel):
 
 class ProcessDocumentUpdate(BaseModel):
     """仅允许修改元数据；状态、版本、文件通过专用 API 变更。"""
+    doc_no: Optional[str] = None
+    doc_class: Optional[str] = None
     doc_name: Optional[str] = None
     doc_type: Optional[str] = None
     version: Optional[str] = None
@@ -1059,20 +1069,207 @@ class ProcessDocumentUpdate(BaseModel):
     batch_no: Optional[str] = None
     shift: Optional[str] = None
     production_date: Optional[datetime] = None
+    review_cycle_month: Optional[int] = None
+    # 外来文件字段
+    source_type: Optional[str] = None
+    source_ref_no: Optional[str] = None
+    received_date: Optional[datetime] = None
 
 
 class ProcessDocumentStatusTransition(BaseModel):
     """状态流转请求体。
 
     合法流转：
-    - 草稿 → 生效 (需 effective_date；自动作废同 group 旧生效版)
-    - 草稿 → 作废
+    - 草稿 → 审核中 / 生效 / 作废
+    - 审核中 → 生效 / 作废 / 草稿（驳回退回）
     - 生效 → 作废
     其余流转(如生效→草稿、作废→任意)均非法。
     """
-    status: str  # 目标状态：生效 / 作废
+    status: str  # 目标状态：审核中 / 生效 / 作废 / 草稿
     effective_date: Optional[datetime] = None
     remark: Optional[str] = None
+
+
+# ============ 模块 K2: 文档编号规则 ============
+
+class DocNoRuleOut(BaseModel):
+    id: int
+    doc_class: str
+    prefix: str
+    use_equipment_code: bool
+    use_year: bool
+    use_month: bool
+    seq_width: int
+    next_seq: int
+    is_active: bool
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DocNoRuleCreate(BaseModel):
+    doc_class: str = Field(..., max_length=16, description="文控分类: SOP/SIP/SPEC/FORM/RECORD/EXTERN")
+    prefix: str = Field(..., max_length=16)
+    use_equipment_code: bool = False
+    use_year: bool = True
+    use_month: bool = False
+    seq_width: int = Field(3, ge=1, le=8)
+    is_active: bool = True
+    description: Optional[str] = None
+
+
+class DocNoRuleUpdate(BaseModel):
+    prefix: Optional[str] = None
+    use_equipment_code: Optional[bool] = None
+    use_year: Optional[bool] = None
+    use_month: Optional[bool] = None
+    seq_width: Optional[int] = Field(None, ge=1, le=8)
+    next_seq: Optional[int] = Field(None, ge=1)
+    is_active: Optional[bool] = None
+    description: Optional[str] = None
+
+
+class DocNoGenerateRequest(BaseModel):
+    """根据编号规则生成文档编号。"""
+    doc_class: str = Field(..., description="文控分类")
+    equipment_id: Optional[int] = Field(None, description="机台ID（规则含机台码时使用）")
+
+
+class DocNoGenerateResponse(BaseModel):
+    doc_no: str
+    rule_id: int
+    seq: int
+
+
+# ============ 模块 K3/K4/K5: 审批链 / 修订记录 / 分发 ============
+
+# -------- 审批 --------
+class ApprovalSignRequest(BaseModel):
+    """签署时的 payload（编制/审核/批准/作废 通用）。
+
+    需二次校验密码保证电子签名合规。
+    """
+    process_document_id: int
+    stage: str = Field(..., description="prepare/review/approve/reject_prepare/reject_review/reject_approve")
+    password: str = Field(..., max_length=128, description="签署人当前登录密码")
+    comment: Optional[str] = Field(None, max_length=500, description="签署意见；驳回时必填原因")
+
+
+class DocumentApprovalOut(BaseModel):
+    id: int
+    process_document_id: int
+    stage: str
+    stage_order: int
+    result: str
+    comment: Optional[str] = None
+    signer_id: int
+    signer_username: str
+    signer_display_name: Optional[str] = None
+    signer_role: Optional[str] = None
+    signed_at: datetime
+    password_validated: bool
+    # 签名指纹只显示前缀（不可泄露全部）
+    signature_tail: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# -------- 修订 --------
+class ChangeDetailItem(BaseModel):
+    seq: int = Field(1, ge=1)
+    change_type: str = Field("M", description="A=新增 M=修改 D=删除")
+    page: Optional[str] = None
+    before: Optional[str] = None
+    after: Optional[str] = None
+    impact: Optional[str] = None
+
+
+class DocumentChangeLogCreate(BaseModel):
+    process_document_id: int
+    change_reason: str = Field(..., description="NEW/REV_VOID/REV_SPEC/REV_STEP/ENG_CHG/QC_NC/CUSTOMER")
+    change_summary: str = Field(..., min_length=1, max_length=500)
+    detail_items: List[ChangeDetailItem] = Field(default_factory=list)
+
+
+class DocumentChangeLogOut(BaseModel):
+    id: int
+    process_document_id: int
+    change_reason: str
+    change_summary: str
+    detail_items_json: Optional[List[ChangeDetailItem]] = None
+    detail_items: Optional[List[ChangeDetailItem]] = None
+    version: Optional[str] = None
+    changed_by_id: Optional[int] = None
+    changed_by_username: Optional[str] = None
+    changed_at: Optional[datetime] = None
+    created_by_id: int
+    created_by_username: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+    @model_validator(mode="after")
+    def _backward_compat(self):
+        if self.detail_items is None and self.detail_items_json is not None:
+            self.detail_items = self.detail_items_json
+        if self.changed_at is None:
+            self.changed_at = self.created_at
+        if self.changed_by_id is None:
+            self.changed_by_id = self.created_by_id
+        if self.changed_by_username is None:
+            self.changed_by_username = self.created_by_username
+        return self
+
+
+# -------- 分发 --------
+class DocumentDistributionCreate(BaseModel):
+    process_document_id: int
+    recipient_type: str = Field("USER", description="USER/ROLE/DEPARTMENT")
+    recipient_ref: str = Field(..., max_length=64)
+    hold_copies: int = Field(1, ge=1)
+    medium: str = Field("E", description="E=电子 P=纸质")
+
+
+class DocumentDistributionReturn(BaseModel):
+    ids: List[int]
+    return_note: Optional[str] = None
+
+
+class DocumentDistributionOut(BaseModel):
+    id: int
+    process_document_id: int
+    recipient_type: str
+    recipient_ref: str
+    recipient_name: Optional[str] = None
+    hold_copies: int
+    medium: str
+    issued_at: datetime
+    issued_by_id: Optional[int] = None
+    distributed_by_username: Optional[str] = None
+    returned: bool
+    returned_at: Optional[datetime] = None
+    return_note: Optional[str] = None
+    status: Optional[str] = None
+    distributed_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+    @model_validator(mode="after")
+    def _derive_fields(self):
+        if self.distributed_at is None:
+            self.distributed_at = self.issued_at
+        if self.status is None:
+            if self.returned:
+                self.status = "RETURNED"
+            else:
+                self.status = "DISTRIBUTED"
+        return self
 
 
 # ============ 模块 L: 表单模板与结构化表单记录 ============
@@ -1168,6 +1365,11 @@ class FormRecordOut(FormRecordBase):
     status: str
     filled_by: Optional[int] = None
     submitted_at: Optional[datetime] = None
+    submitted_by: Optional[int] = None
+    audited: bool = False
+    audited_at: Optional[datetime] = None
+    audited_by: Optional[int] = None
+    audit_password_validated: bool = False
     values: List[FormRecordKeyValue] = Field(default_factory=list)
     # 展示辅助：模板信息快照
     template_name: Optional[str] = None
@@ -1178,4 +1380,55 @@ class FormRecordOut(FormRecordBase):
 
     class Config:
         from_attributes = True
+
+
+# 表单审核签名（二次密码校验）
+class FormRecordAuditRequest(BaseModel):
+    record_id: int
+    password: str = Field(..., max_length=128, description="审核人登录密码（二次校验）")
+    comment: Optional[str] = Field(None, max_length=500)
+    reject: bool = Field(False, description="True=驳回（状态回已提交）")
+
+
+# 已审核记录附加修正
+class FormRecordAmendmentCreate(BaseModel):
+    record_id: int
+    field_key: str = Field(..., max_length=64)
+    field_label: Optional[str] = Field(None, max_length=255)
+    original_value: Optional[object] = None
+    corrected_value: Optional[object] = None
+    reason: str = Field(..., min_length=1, max_length=500)
+    password: str = Field(..., max_length=128, description="修正人登录密码（二次校验）")
+
+
+class FormRecordAmendmentOut(BaseModel):
+    id: int
+    record_id: int
+    field_key: str
+    field_label: Optional[str] = None
+    original_value: Optional[object] = None
+    corrected_value: Optional[object] = None
+    reason: str
+    amended_by_id: int
+    amended_by_username: str
+    amended_at: datetime
+    password_validated: bool
+    approved: Optional[bool] = None
+    approved_by_id: Optional[int] = None
+    approved_at: Optional[datetime] = None
+    status: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+    @model_validator(mode="after")
+    def _derive_status(self):
+        if self.status is None:
+            if self.approved is None:
+                self.status = "PENDING"
+            elif self.approved:
+                self.status = "APPROVED"
+            else:
+                self.status = "REJECTED"
+        return self
 

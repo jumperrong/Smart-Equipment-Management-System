@@ -3,7 +3,8 @@ from fastapi import APIRouter
 from app.api.v1 import (
     auth, equipment, attachment, spare_part, inspection, work_order,
     quality, environment, personnel, asset, dashboard, dictionary, system,
-    process_document, form_templates, form_records,
+    process_document, form_templates, form_records, doc_no_rules,
+    process_doc_qc, form_record_qc,
 )
 
 api_router = APIRouter()
@@ -25,6 +26,9 @@ api_router.include_router(system.router)
 api_router.include_router(process_document.router)
 api_router.include_router(form_templates.router)
 api_router.include_router(form_records.router)
+api_router.include_router(doc_no_rules.router)
+api_router.include_router(process_doc_qc.router)
+api_router.include_router(form_record_qc.router)
 
 
 @api_router.get("/health")

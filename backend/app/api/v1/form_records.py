@@ -269,6 +269,12 @@ def update_record(
         raise HTTPException(status_code=404, detail="表单记录不存在")
     if rec.status == "已作废":
         raise HTTPException(status_code=400, detail="已作废的记录不允许编辑")
+    # 文控审核锁定：已审核通过的记录禁止原地修改，只能通过 Amendment 附加修正
+    if rec.audited:
+        raise HTTPException(
+            status_code=400,
+            detail="该记录已文控审核锁定，禁止原地修改。如需更正，请通过「附加修正(Amendment)」留痕。"
+        )
 
     tpl = get_template_or_404(db, rec.template_id)
     fields = sorted_fields_from_template(tpl)

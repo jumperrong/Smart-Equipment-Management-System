@@ -9,7 +9,7 @@
 """
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
@@ -25,6 +25,7 @@ from app.schemas import (
 )
 from app.services.user_service import get_current_user
 from app.services.permission_service import require_permission
+from app.api.v1.watermark import serve_watermarked_pdf
 
 router = APIRouter(prefix="/process-documents", tags=["工艺文件"])
 
@@ -33,11 +34,15 @@ ALLOWED_EXTS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt
 # 单文件大小上限（50 MB）
 MAX_FILE_SIZE = 50 * 1024 * 1024
 # 允许的状态值
-ALLOWED_STATUS = {"草稿", "生效", "作废"}
+ALLOWED_STATUS = {"草稿", "审核中", "生效", "作废"}
 # 合法状态流转：(from, to)
 VALID_TRANSITIONS = {
+    ("草稿", "审核中"),
     ("草稿", "生效"),
     ("草稿", "作废"),
+    ("审核中", "生效"),
+    ("审核中", "作废"),
+    ("审核中", "草稿"),
     ("生效", "作废"),
 }
 
@@ -97,7 +102,7 @@ def _validate_transition(from_status: str, to_status: str) -> None:
         raise HTTPException(
             status_code=400,
             detail=f"非法状态流转: {from_status} → {to_status}。"
-                  f"允许: 草稿→生效、草稿→作废、生效→作废",
+                  f"允许: 草稿→审核中、草稿→生效、草稿→作废、审核中→生效、审核中→作废、审核中→草稿、生效→作废",
         )
 
 
@@ -126,27 +131,40 @@ def list_process_documents(
     equipment_id: Optional[int] = Query(None),
     category: Optional[str] = Query(None, description="大类: guide指导性/record作业记录"),
     doc_type: Optional[str] = Query(None),
+    doc_class: Optional[str] = Query(None, description="文控分类: SOP/SIP/SPEC/FORM/RECORD/EXTERN"),
     status: Optional[str] = Query(None),
     batch_no: Optional[str] = Query(None, description="作业记录-批号模糊查询"),
-    keyword: Optional[str] = Query(None),
+    keyword: Optional[str] = Query(None, description="文件名称或文档编号模糊查询"),
     latest_only: bool = Query(True, description="仅返回每个文档的最新版本"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     q = db.query(ProcessDocument)
+    # —— 阶段 2-2 现场端视图锁定：operator 角色默认仅看生效+最新版 ——
+    role = getattr(current_user, "role", None)
+    if role == "operator":
+        q = q.filter(ProcessDocument.status == "生效")
+        if latest_only is not True:
+            # operator 不可切换"显示全部版本"
+            q = q.filter(ProcessDocument.is_latest == True)
     if equipment_id:
         q = q.filter(ProcessDocument.equipment_id == equipment_id)
     if category:
         q = q.filter(ProcessDocument.category == category)
     if doc_type:
         q = q.filter(ProcessDocument.doc_type == doc_type)
+    if doc_class:
+        q = q.filter(ProcessDocument.doc_class == doc_class)
     if status:
         q = q.filter(ProcessDocument.status == status)
     if batch_no:
         q = q.filter(ProcessDocument.batch_no.ilike(f"%{batch_no}%"))
     if keyword:
-        q = q.filter(ProcessDocument.doc_name.ilike(f"%{keyword}%"))
-    if latest_only:
+        q = q.filter(
+            (ProcessDocument.doc_name.ilike(f"%{keyword}%")) |
+            (ProcessDocument.doc_no.ilike(f"%{keyword}%"))
+        )
+    if latest_only and role != "operator":
         q = q.filter(ProcessDocument.is_latest == True)
     return q.order_by(ProcessDocument.id.desc()).all()
 
@@ -158,14 +176,21 @@ async def upload_process_document(
     equipment_id: int = Form(...),
     file: UploadFile = File(...),
     category: str = Form("guide", description="大类: guide指导性/record作业记录"),
+    doc_no: Optional[str] = Form(None, description="文档编号（体系文控用）"),
+    doc_class: Optional[str] = Form(None, description="文控分类: SOP/SIP/SPEC/FORM/RECORD/EXTERN"),
     doc_name: Optional[str] = Form(None),
     doc_type: Optional[str] = Form(None),
     version: Optional[str] = Form(None),
     effective_date: Optional[str] = Form(None),
+    review_cycle_month: Optional[int] = Form(None, description="复审周期(月)"),
     batch_no: Optional[str] = Form(None),
     shift: Optional[str] = Form(None),
     production_date: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
+    # —— 外来文件字段（doc_class=EXTERN 时使用）
+    source_type: Optional[str] = Form(None, description="来源类型: CUSTOMER客户/HQ总部/REGULATION法规/VENDOR设备商/INTERNAL内部"),
+    source_ref_no: Optional[str] = Form(None, description="外部来源文件编号"),
+    received_date: Optional[str] = Form(None, description="接收日期"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -173,6 +198,8 @@ async def upload_process_document(
 
     - category=guide：指导性文件，重版本管理
     - category=record：作业记录文件，重批号/班次/生产日期
+    - doc_no/doc_class/review_cycle_month：体系文控字段
+    - source_type/source_ref_no/received_date：外来文件专属字段
     """
     if category not in ("guide", "record"):
         raise HTTPException(status_code=400, detail="category 取值: guide/record")
@@ -182,9 +209,13 @@ async def upload_process_document(
     stored_name, size, ftype, _ = _save_upload(file)
     eff_dt = _parse_date(effective_date)
     prod_dt = _parse_date(production_date)
+    recv_dt = _parse_date(received_date)
+    next_review = _compute_next_review(eff_dt, review_cycle_month)
     obj = ProcessDocument(
         equipment_id=equipment_id,
         category=category,
+        doc_no=doc_no,
+        doc_class=doc_class,
         doc_name=doc_name or file.filename,
         doc_type=doc_type,
         version=version,
@@ -193,6 +224,8 @@ async def upload_process_document(
         is_latest=True,
         status="草稿",
         effective_date=eff_dt,
+        review_cycle_month=review_cycle_month,
+        next_review_date=next_review,
         batch_no=batch_no,
         shift=shift,
         production_date=prod_dt,
@@ -201,10 +234,15 @@ async def upload_process_document(
         file_type=ftype,
         description=description,
         uploaded_by=current_user.id,
+        # 外来文件字段
+        source_type=source_type,
+        source_ref_no=source_ref_no,
+        received_date=recv_dt,
     )
     db.add(obj)
     db.commit()
     db.refresh(obj)
+    print(f"[SEC-AUDIT] DOC_UPLOAD user={current_user.username} doc_id={obj.id} doc_no={doc_no or ''} name={obj.doc_name} ip= ")
     return obj
 
 
@@ -260,10 +298,11 @@ def delete_process_document(doc_id: int, db: Session = Depends(get_db)):
 # ==================== 下载 ====================
 
 @router.get("/{doc_id}/download", dependencies=[Depends(get_current_user)])
-def download_process_document(doc_id: int, db: Session = Depends(get_db)):
+def download_process_document(doc_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     obj = db.query(ProcessDocument).filter(ProcessDocument.id == doc_id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="工艺文件不存在")
+    print(f"[SEC-AUDIT] DOC_DOWNLOAD user={current_user.username} doc_id={obj.id} doc_no={obj.doc_no or ''} name={obj.doc_name}")
     # 结构化表单记录：无物理上传文件，自动跳转到关联 form_record 的 CSV 导出
     if not obj.stored_path and obj.form_record_id:
         from fastapi.responses import RedirectResponse
@@ -280,6 +319,15 @@ def download_process_document(doc_id: int, db: Session = Depends(get_db)):
             dl_name = f"{stem}_v{obj.version_seq}{ext}"
         else:
             dl_name = f"{dl_name}_v{obj.version_seq}"
+    # 接入水印：PDF 文件添加水印和受控章；其他文件直接返回
+    ext = os.path.splitext(obj.stored_path)[1].lower()
+    doc_info = {
+        "doc_no": obj.doc_no,
+        "doc_name": obj.doc_name,
+        "status": obj.status,
+    }
+    if ext == ".pdf":
+        return serve_watermarked_pdf(fp, doc_info, current_user)
     return FileResponse(fp, filename=dl_name)
 
 
@@ -339,6 +387,8 @@ async def create_new_version(
     obj = ProcessDocument(
         equipment_id=src.equipment_id,
         category=src.category,
+        doc_no=src.doc_no,
+        doc_class=src.doc_class,
         doc_name=src.doc_name,
         doc_type=src.doc_type,
         version=version or f"V{new_seq}",
@@ -347,6 +397,7 @@ async def create_new_version(
         is_latest=True,
         status="草稿",
         effective_date=_parse_date(effective_date),
+        review_cycle_month=src.review_cycle_month,
         batch_no=batch_no or src.batch_no,
         shift=shift or src.shift,
         production_date=_parse_date(production_date) or src.production_date,
@@ -359,6 +410,7 @@ async def create_new_version(
     db.add(obj)
     db.commit()
     db.refresh(obj)
+    print(f"[SEC-AUDIT] DOC_NEW_VERSION user={current_user.username} doc_id={obj.id} doc_no={obj.doc_no or ''} seq={new_seq} name={obj.doc_name}")
     return obj
 
 
@@ -374,10 +426,11 @@ def transition_status(
     payload: ProcessDocumentStatusTransition,
     db: Session = Depends(get_db),
 ):
-    """状态流转：草稿→生效、草稿→作废、生效→作废。
+    """状态流转：草稿→审核中、草稿→生效、草稿→作废、审核中→生效、审核中→作废、审核中→草稿、生效→作废。
 
-    - 草稿→生效：必须有 effective_date；同 group 旧生效版自动作废
-    - 生效→作废 / 草稿→作废：可选 remark 写入 description
+    - 草稿/审核中→生效：必须有 effective_date；同 group 旧生效版自动作废
+    - 生效→作废 / 草稿→作废 / 审核中→作废：可选 remark 写入 description
+    - 审核中→草稿：审核驳回退回
     """
     obj = db.query(ProcessDocument).filter(ProcessDocument.id == doc_id).first()
     if not obj:
@@ -391,12 +444,22 @@ def transition_status(
             eff_dt = payload.effective_date
         obj.status = "生效"
         obj.effective_date = eff_dt
+        # 发布时自动计算下次复审日期
+        obj.next_review_date = _compute_next_review(eff_dt, obj.review_cycle_month)
         # 同 group 旧生效版自动作废
         db.query(ProcessDocument).filter(
             ProcessDocument.group_id == obj.group_id,
             ProcessDocument.id != obj.id,
             ProcessDocument.status == "生效",
         ).update({ProcessDocument.status: "作废"}, synchronize_session=False)
+    elif payload.status == "审核中":
+        obj.status = "审核中"
+    elif payload.status == "草稿":
+        # 审核中 → 草稿（驳回退回）
+        obj.status = "草稿"
+        if payload.remark:
+            prev = obj.description or ""
+            obj.description = f"{prev}\n[审核退回备注] {payload.remark}".strip()
     else:  # 作废
         obj.status = "作废"
         if payload.remark:
@@ -404,6 +467,7 @@ def transition_status(
             obj.description = f"{prev}\n[作废备注] {payload.remark}".strip()
     db.commit()
     db.refresh(obj)
+    print(f"[SEC-AUDIT] DOC_STATUS_{payload.status} doc_id={obj.id} doc_no={obj.doc_no or ''} name={obj.doc_name} next_review={obj.next_review_date}")
     return obj
 
 
@@ -450,3 +514,17 @@ def _parse_date(s: Optional[str]) -> Optional[datetime]:
         return datetime.fromisoformat(s.replace("Z", ""))
     except (ValueError, AttributeError):
         return None
+
+
+def _compute_next_review(effective_date: Optional[datetime], cycle_month: Optional[int]) -> Optional[datetime]:
+    """根据生效日期和复审周期(月)计算下次复审日期。
+
+    effective_date 为空时以当前时间计算。
+    cycle_month 为空或 ≤0 时返回 None（不需要定期复审）。
+    """
+    if not cycle_month or cycle_month <= 0:
+        return None
+    base = effective_date or datetime.utcnow()
+    # 近似按月加（按 30.44 天/月 换算到天）
+    total_days = int(cycle_month * 30.44)
+    return base + timedelta(days=total_days)

@@ -93,3 +93,21 @@ export function exportFormRecord(id, format = 'json') {
       setTimeout(() => URL.revokeObjectURL(a.href), 5000)
     })
 }
+
+// ============== 文控扩展：表单记录审核锁定 ==============
+
+// 表单记录审核（通过/驳回，需二次密码校验，电子签名）
+export const auditFormRecord = (data) =>
+  request({ url: `${recBase}/audit`, method: 'post', data })
+
+// 列出某表单记录的附加修正列表
+export const listAmendments = (recordId) =>
+  request({ url: `${recBase}/${recordId}/amendments`, method: 'get' })
+
+// 新增附加修正（需二次密码校验，电子签名）
+export const createAmendment = (data) =>
+  request({ url: `${recBase}/amendments`, method: 'post', data })
+
+// 审核人批准/驳回一条附加修正
+export const approveAmendment = (id, approve = true) =>
+  request({ url: `${recBase}/amendments/${id}/approve`, method: 'post', params: { approve } })

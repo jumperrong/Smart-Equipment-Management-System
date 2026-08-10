@@ -90,6 +90,7 @@
           <template #default="{ row }">
             <b>{{ row.doc_name }}</b>
             <el-tag v-if="!row.is_latest" size="small" type="info" style="margin-left:6px">历史版本</el-tag>
+            <div v-if="row.doc_no" style="font-size:11px;color:var(--el-text-color-secondary);margin-top:2px">{{ row.doc_no }}</div>
           </template>
         </el-table-column>
         <el-table-column label="类型" width="110">
@@ -118,9 +119,18 @@
         <el-table-column v-if="activeCategory === 'record'" label="生产日期" width="120">
           <template #default="{ row }">{{ row.production_date ? formatDate(row.production_date) : '-' }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="150">
           <template #default="{ row }">
             <el-tag :type="docStatusTag(row.status)" size="small">{{ row.status }}</el-tag>
+            <el-tag
+              v-if="row.status === '生效' && isReviewDue(row)"
+              size="small"
+              type="danger"
+              effect="dark"
+              style="margin-left:4px;margin-top:2px"
+            >
+              复审 {{ reviewDueLabel(row) }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column v-if="activeCategory === 'record'" label="表单来源" width="150">
@@ -129,8 +139,13 @@
             <el-tag v-else size="small" type="info" effect="plain">附件文件</el-tag>
           </template>
         </el-table-column>
-        <el-table-column v-if="activeCategory === 'guide'" label="生效日期" width="120">
-          <template #default="{ row }">{{ row.effective_date ? formatDate(row.effective_date) : '-' }}</template>
+        <el-table-column v-if="activeCategory === 'guide'" label="生效日期 / 复审" width="170">
+          <template #default="{ row }">
+            <div>{{ row.effective_date ? formatDate(row.effective_date) : '-' }}</div>
+            <div v-if="row.next_review_date" style="font-size:11px;color:var(--el-text-color-secondary)">
+              下次复审: {{ formatDate(row.next_review_date) }}
+            </div>
+          </template>
         </el-table-column>
         <el-table-column label="大小" width="90">
           <template #default="{ row }">
@@ -145,9 +160,9 @@
         <el-table-column label="上传时间" width="160">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="400" fixed="right">
+        <el-table-column label="操作" width="520" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" link type="primary" @click="onDownload(row)">下载</el-button>
+            <el-button size="small" link type="primary" @click="onDownload(row)">下载(水印)</el-button>
             <el-button
               v-if="row.form_record_id && canFill"
               size="small"
@@ -161,6 +176,45 @@
             <el-button v-if="row.form_record_id" size="small" link type="warning" @click="onExportRecord(row, 'json')">导出JSON</el-button>
             <el-button v-if="row.form_record_id" size="small" link type="warning" @click="onExportRecord(row, 'csv')">导出CSV</el-button>
             <el-button size="small" link type="info" @click="openVersionDialog(row)">版本</el-button>
+            <!-- 文控操作：提交审核 / 审核 / 批准 -->
+            <el-button
+              v-if="canSubmitReview && row.status === '草稿' && !row.form_record_id"
+              size="small"
+              link
+              type="warning"
+              @click="openApprovalDialog(row, 'prepare')"
+            >提交审核</el-button>
+            <el-button
+              v-if="canApprove && row.status === '审核中'"
+              size="small"
+              link
+              type="warning"
+              @click="openApprovalDialog(row, 'review')"
+            >审核</el-button>
+            <el-button
+              v-if="canApprove && row.status === '审核中'"
+              size="small"
+              link
+              type="success"
+              @click="openApprovalDialog(row, 'approve')"
+            >批准</el-button>
+            <el-button
+              v-if="canAuditForm && row.form_record_id && (row.status === '已提交' || row.status === '草稿')"
+              size="small"
+              link
+              type="success"
+              @click="openAuditDialog(row)"
+            >文控审核</el-button>
+            <el-button
+              v-if="canAmendForm && row.form_record_id"
+              size="small"
+              link
+              type="warning"
+              @click="openAmendmentDialog(row)"
+            >附加修正</el-button>
+            <!-- 文控：修订记录 / 分发记录 -->
+            <el-button size="small" link type="primary" @click="openChangeLogDialog(row)">修订</el-button>
+            <el-button size="small" link type="primary" @click="openDistDialog(row)">分发</el-button>
             <el-button v-if="canWrite && !row.form_record_id" size="small" link type="success" @click="openNewVersionDialog(row)">新版本</el-button>
             <el-button v-if="canWrite && row.status === '草稿'" size="small" link type="warning" @click="onPublish(row)">发布</el-button>
             <el-button v-if="canWrite && row.status !== '作废'" size="small" link type="danger" @click="onDeprecate(row)">作废</el-button>
@@ -458,6 +512,18 @@
         <el-form-item label="文件名称">
           <el-input v-model="uploadForm.doc_name" placeholder="留空则使用上传文件名" />
         </el-form-item>
+        <el-form-item label="文控分类">
+          <el-select v-model="uploadForm.doc_class" placeholder="选择分类" clearable style="width:100%" @change="onDocClassChange">
+            <el-option v-for="c in docClassOptions" :key="c.value" :label="c.label" :value="c.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="文档编号">
+          <div style="display:flex;gap:8px;width:100%">
+            <el-input v-model="uploadForm.doc_no" placeholder="可点击右侧按钮按规则生成" />
+            <el-button type="info" plain :disabled="!uploadForm.doc_class" :loading="generatingNo" @click="onGenerateDocNo">生成</el-button>
+          </div>
+          <div v-if="previewNo" class="upload-tip" style="color:var(--el-color-primary)">预览: {{ previewNo }}</div>
+        </el-form-item>
         <el-form-item label="类型">
           <el-select v-model="uploadForm.doc_type" placeholder="选择类型" clearable style="width:100%">
             <el-option v-for="t in currentDocTypeOptions" :key="t" :label="docTypeLabel(t)" :value="t" />
@@ -466,6 +532,10 @@
         <!-- 指导性文件字段 -->
         <el-form-item v-if="activeCategory === 'guide'" label="版本号">
           <el-input v-model="uploadForm.version" placeholder="例如 V1.0（留空默认 V1）" />
+        </el-form-item>
+        <el-form-item v-if="activeCategory === 'guide'" label="复审周期">
+          <el-input-number v-model="uploadForm.review_cycle_month" :min="0" :max="60" placeholder="月" style="width:100%" />
+          <div class="upload-tip">0 或留空 = 不需要定期复审；发布时自动计算下次复审日期</div>
         </el-form-item>
         <!-- 作业记录字段 -->
         <template v-if="activeCategory === 'record'">
@@ -505,6 +575,14 @@
         <el-form-item label="文件名称" prop="doc_name">
           <el-input v-model="editForm.doc_name" />
         </el-form-item>
+        <el-form-item label="文控分类">
+          <el-select v-model="editForm.doc_class" placeholder="选择分类" clearable style="width:100%">
+            <el-option v-for="c in docClassOptions" :key="c.value" :label="c.label" :value="c.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="文档编号">
+          <el-input v-model="editForm.doc_no" placeholder="体系文控编号" />
+        </el-form-item>
         <el-form-item label="类型">
           <el-select v-model="editForm.doc_type" placeholder="选择类型" clearable style="width:100%">
             <el-option v-for="t in editDocTypeOptions" :key="t" :label="docTypeLabel(t)" :value="t" />
@@ -512,6 +590,9 @@
         </el-form-item>
         <el-form-item v-if="editForm.category === 'guide'" label="版本号">
           <el-input v-model="editForm.version" placeholder="例如 V1.0" />
+        </el-form-item>
+        <el-form-item v-if="editForm.category === 'guide'" label="复审周期">
+          <el-input-number v-model="editForm.review_cycle_month" :min="0" :max="60" style="width:100%" />
         </el-form-item>
         <el-form-item v-if="editForm.category === 'guide'" label="生效日期">
           <el-date-picker
@@ -700,6 +781,10 @@
             style="width:100%"
           />
         </el-form-item>
+        <el-form-item v-if="statusTarget?.review_cycle_month > 0" label="复审周期">
+          <span>{{ statusTarget.review_cycle_month }} 个月</span>
+          <el-tag size="small" type="warning" style="margin-left:8px">发布后自动计算下次复审日期</el-tag>
+        </el-form-item>
       </el-form>
       <el-alert type="warning" :closable="false">
         发布后，同文档的其他"生效"版本将自动转为"作废"。
@@ -707,6 +792,264 @@
       <template #footer>
         <el-button @click="publishDialogVisible = false">取消</el-button>
         <el-button type="success" :loading="statusTransitioning" @click="onConfirmPublish">确认发布</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 审批链对话框 -->
+    <el-dialog v-model="approvalDialogVisible" :title="`${stageLabelMap[approvalStage]} - ${approvalTarget?.doc_name || ''}`" width="560px" top="6vh">
+      <el-alert type="info" :closable="false" style="margin-bottom:12px">
+        <template #title>电子签名需二次校验密码，确保签署人身份真实性。</template>
+      </el-alert>
+      <el-form label-width="100px">
+        <el-form-item label="签署阶段">
+          <el-tag :type="approvalStage === 'prepare' ? 'info' : approvalStage === 'review' ? 'warning' : 'success'">{{ stageLabelMap[approvalStage] }}</el-tag>
+        </el-form-item>
+        <el-form-item label="签署意见" prop="comment">
+          <el-input v-model="approvalForm.comment" type="textarea" :rows="3" placeholder="请输入签署意见（驳回时必填）" />
+        </el-form-item>
+        <el-form-item label="密码校验" prop="password">
+          <el-input v-model="approvalForm.password" type="password" placeholder="请输入当前登录密码" show-password />
+        </el-form-item>
+      </el-form>
+      <el-divider content-position="left">历史签署记录</el-divider>
+      <el-timeline>
+        <el-timeline-item v-for="a in approvalList" :key="a.id" :timestamp="formatTime(a.signed_at)">
+          <el-card shadow="never" style="width:100%">
+            <div style="display:flex;justify-content:space-between">
+              <div>
+                <div><b>{{ a.signer_display_name || a.signer_username }}</b> <small>({{ a.signer_role }})</small></div>
+                <div>{{ a.stage === 'prepare' ? '编制提交' : a.stage === 'review' ? '审核通过' : a.stage === 'approve' ? '批准生效' : a.stage?.startsWith('reject') ? '驳回' : a.stage }}</div>
+              </div>
+              <div style="text-align:right">
+                <div v-if="a.comment" style="font-size:13px;color:#606266">{{ a.comment }}</div>
+                <div style="font-size:11px;color:#909399;margin-top:4px">签名: {{ a.signature_tail || 'N/A' }}</div>
+              </div>
+            </div>
+          </el-card>
+        </el-timeline-item>
+        <el-timeline-item v-if="!approvalList.length">暂无签署记录</el-timeline-item>
+      </el-timeline>
+      <template #footer>
+        <el-button @click="approvalDialogVisible = false">取消</el-button>
+        <el-button v-if="['prepare', 'review'].includes(approvalStage)" type="danger" @click="onConfirmApproval(true)">驳回</el-button>
+        <el-button type="primary" :loading="approvalLoading" @click="onConfirmApproval(false)">确认签署</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 修订记录对话框 -->
+    <el-dialog v-model="changeLogDialogVisible" :title="`修订记录 - ${changeLogTarget?.doc_name || ''}`" width="760px" top="6vh">
+      <el-form :inline="true" :model="changeLogForm" label-width="90px" style="background:#f8f9fb;padding:12px;border-radius:6px;margin-bottom:12px">
+        <el-form-item label="变更原因">
+          <el-select v-model="changeLogForm.change_reason" style="width:200px">
+            <el-option v-for="r in changeReasonOptions" :key="r.value" :label="r.label" :value="r.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="变更摘要">
+          <el-input v-model="changeLogForm.change_summary" placeholder="简要说明本次变更" style="width:300px" />
+        </el-form-item>
+        <el-form-item label="详细项">
+          <el-input v-model="changeLogForm.detail_text" type="textarea" :rows="3" placeholder="每行一条变更明细（可选）" style="width:100%" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="changeLogSaving" @click="onSaveChangeLog">新增修订记录</el-button>
+        </el-form-item>
+      </el-form>
+      <el-divider content-position="left">历史修订记录</el-divider>
+      <el-table :data="changeLogList" stripe border size="small">
+        <el-table-column label="版本" width="80">
+          <template #default="{ row }">{{ row.version || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="变更原因" width="120">
+          <template #default="{ row }">
+            <el-tag size="small">{{ (changeReasonOptions.find(r => r.value === row.change_reason) || {}).label || row.change_reason }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="变更摘要" min-width="180">
+          <template #default="{ row }">{{ row.change_summary }}</template>
+        </el-table-column>
+        <el-table-column label="变更人" width="90">
+          <template #default="{ row }">{{ row.changed_by_username || '#' + (row.changed_by_id || '') }}</template>
+        </el-table-column>
+        <el-table-column label="变更日期" width="160">
+          <template #default="{ row }">{{ formatTime(row.changed_at) }}</template>
+        </el-table-column>
+        <el-table-column label="明细" width="60" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.detail_items && row.detail_items.length" size="small" type="info">{{ row.detail_items.length }}</el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="!changeLogList.length" style="text-align:center;padding:20px;color:#909399">暂无修订记录</div>
+    </el-dialog>
+
+    <!-- 分发记录对话框 -->
+    <el-dialog v-model="distDialogVisible" :title="`分发记录 - ${distTarget?.doc_name || ''}`" width="820px" top="6vh">
+      <el-form :inline="true" :model="distForm" label-width="80px" style="background:#f8f9fb;padding:12px;border-radius:6px;margin-bottom:12px">
+        <el-form-item label="接收类型">
+          <el-select v-model="distForm.recipient_type" style="width:110px">
+            <el-option v-for="r in recipientTypeOptions" :key="r.value" :label="r.label" :value="r.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="接收人">
+          <el-input v-model="distForm.recipient_ref" placeholder="用户名/角色名/部门名" style="width:180px" />
+        </el-form-item>
+        <el-form-item label="份数">
+          <el-input-number v-model="distForm.hold_copies" :min="1" :max="999" style="width:110px" />
+        </el-form-item>
+        <el-form-item label="介质">
+          <el-select v-model="distForm.medium" style="width:90px">
+            <el-option v-for="m in mediumOptions" :key="m.value" :label="m.label" :value="m.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="distSaving" @click="onSaveDistribution">登记分发</el-button>
+        </el-form-item>
+      </el-form>
+      <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+        <el-button size="small" type="warning" :disabled="!distSelected.length" @click="() => { ElMessageBox.prompt('请输入收回备注（可选）', '批量收回', { inputType: 'textarea' }).then(r => onReturnBatch(r.value || '')).catch(() => {}) }">批量收回选中</el-button>
+        <span style="color:#909399;font-size:12px">已选中 {{ distSelected.length }} 条</span>
+      </div>
+      <el-table :data="distList" stripe border size="small" @selection-change="v => distSelected = v.map(x => x.id)">
+        <el-table-column type="selection" width="42" />
+        <el-table-column label="接收类型" width="90">
+          <template #default="{ row }">
+            <el-tag size="small">{{ (recipientTypeOptions.find(r => r.value === row.recipient_type) || {}).label || row.recipient_type }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="接收方" min-width="130">
+          <template #default="{ row }">{{ row.recipient_ref }}<span v-if="row.recipient_name" style="color:#909399;margin-left:4px">({{ row.recipient_name }})</span></template>
+        </el-table-column>
+        <el-table-column label="份数" width="60" align="center">{{ row.hold_copies }}</el-table-column>
+        <el-table-column label="介质" width="70">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.medium === 'P' ? 'warning' : 'info'">{{ row.medium === 'P' ? '纸质' : '电子' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.status === 'DISTRIBUTED' ? 'success' : row.status === 'RETURNED' ? 'info' : 'danger'">
+              {{ row.status === 'DISTRIBUTED' ? '持有中' : row.status === 'RETURNED' ? '已收回' : '已作废' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="分发人" width="80">{{ row.distributed_by_username || '' }}</el-table-column>
+        <el-table-column label="分发日期" width="160">
+          <template #default="{ row }">{{ formatTime(row.distributed_at) }}</template>
+        </el-table-column>
+        <el-table-column label="收回备注" min-width="120">
+          <template #default="{ row }">{{ row.return_note || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" link type="danger" @click="onDeleteDistribution(row.id)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="!distList.length" style="text-align:center;padding:20px;color:#909399">暂无分发记录</div>
+    </el-dialog>
+
+    <!-- 表单记录审核对话框 -->
+    <el-dialog v-model="auditDialogVisible" title="文控审核（表单记录锁定）" width="640px" top="6vh">
+      <el-alert :type="auditForm.reject ? 'error' : 'info'" :closable="false" style="margin-bottom:12px">
+        <template #title>审核通过后，记录将被锁定，禁止原地修改，仅允许通过"附加修正"留痕变更。驳回将退回填写状态。</template>
+      </el-alert>
+      <el-form label-width="100px">
+        <el-form-item label="审核动作">
+          <el-radio-group v-model="auditForm.reject">
+            <el-radio :label="false"><el-tag type="success">审核通过（锁定）</el-tag></el-radio>
+            <el-radio :label="true"><el-tag type="danger">驳回（退回修改）</el-tag></el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="审核意见">
+          <el-input v-model="auditForm.comment" type="textarea" :rows="2" :placeholder="auditForm.reject ? '驳回原因必填' : '审核意见（可选）'" />
+        </el-form-item>
+        <el-form-item label="密码校验">
+          <el-input v-model="auditForm.password" type="password" show-password placeholder="请输入登录密码进行二次校验" />
+        </el-form-item>
+      </el-form>
+      <el-divider content-position="left">附加修正历史</el-divider>
+      <el-table :data="amendmentList" stripe border size="small" max-height="220">
+        <el-table-column label="字段" width="140">
+          <template #default="{ row }">{{ row.field_label || row.field_key }}</template>
+        </el-table-column>
+        <el-table-column label="原值" min-width="120">
+          <template #default="{ row }"><span style="color:#909399">{{ row.original_value || '(空)' }}</span></template>
+        </el-table-column>
+        <el-table-column label="修正值" min-width="120">
+          <template #default="{ row }"><span style="color:var(--el-color-success)">{{ row.corrected_value || '(空)' }}</span></template>
+        </el-table-column>
+        <el-table-column label="原因" min-width="140">
+          <template #default="{ row }">{{ row.reason }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="80">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.status === 'APPROVED' ? 'success' : row.status === 'REJECTED' ? 'danger' : 'warning'">
+              {{ row.status === 'APPROVED' ? '已批' : row.status === 'REJECTED' ? '已驳' : '待批' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="修正人" width="80">{{ row.amended_by_username || '' }}</el-table-column>
+        <el-table-column label="操作" width="120" v-if="canAuditForm">
+          <template #default="{ row }">
+            <template v-if="row.status === 'PENDING'">
+              <el-button size="small" link type="success" @click="onApproveAmendment(row.id, true)">批准</el-button>
+              <el-button size="small" link type="danger" @click="onApproveAmendment(row.id, false)">驳回</el-button>
+            </template>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="!amendmentList.length" style="text-align:center;padding:14px;color:#909399">暂无附加修正记录</div>
+      <template #footer>
+        <el-button @click="auditDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="auditLoading" @click="onConfirmAudit">确认审核</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 附加修正对话框 -->
+    <el-dialog v-model="amendmentDialogVisible" title="附加修正（已审核记录的留痕变更）" width="560px" top="6vh">
+      <el-alert type="warning" :closable="false" style="margin-bottom:12px">
+        <template #title>修正记录永久留痕，需二次密码校验，提交后需审核人批准方可生效。</template>
+      </el-alert>
+      <el-form label-width="100px">
+        <el-form-item label="字段标识">
+          <el-input v-model="amendmentForm.field_key" placeholder="字段key，*=综合说明" />
+        </el-form-item>
+        <el-form-item label="字段标签">
+          <el-input v-model="amendmentForm.field_label" placeholder="字段显示名，例如：温度设定值" />
+        </el-form-item>
+        <el-form-item label="原值">
+          <el-input v-model="amendmentForm.original_value" type="textarea" :rows="2" placeholder="修正前的值（可选）" />
+        </el-form-item>
+        <el-form-item label="修正值">
+          <el-input v-model="amendmentForm.corrected_value" type="textarea" :rows="2" placeholder="修正后的值" />
+        </el-form-item>
+        <el-form-item label="修正原因" required>
+          <el-input v-model="amendmentForm.reason" type="textarea" :rows="2" placeholder="必填：为什么需要修正" />
+        </el-form-item>
+        <el-form-item label="密码校验" required>
+          <el-input v-model="amendmentForm.password" type="password" show-password placeholder="请输入登录密码进行二次校验" />
+        </el-form-item>
+      </el-form>
+      <el-divider content-position="left">已有修正记录</el-divider>
+      <el-table :data="amendmentList" stripe border size="small" max-height="200">
+        <el-table-column label="字段" width="130">
+          <template #default="{ row }">{{ row.field_label || row.field_key }}</template>
+        </el-table-column>
+        <el-table-column label="原值">{{ row.original_value || '-' }}</el-table-column>
+        <el-table-column label="修正值">{{ row.corrected_value || '-' }}</el-table-column>
+        <el-table-column label="状态" width="70">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.status === 'APPROVED' ? 'success' : row.status === 'REJECTED' ? 'danger' : 'warning'">
+              {{ row.status === 'APPROVED' ? '已批' : row.status === 'REJECTED' ? '已驳' : '待批' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="!amendmentList.length" style="text-align:center;padding:12px;color:#909399">暂无附加修正记录</div>
+      <template #footer>
+        <el-button @click="amendmentDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="amendmentSaving" @click="onSaveAmendment">提交修正留痕</el-button>
       </template>
     </el-dialog>
   </div>
@@ -726,8 +1069,17 @@ import {
   createNewVersion,
   transitionStatus,
   replaceFile,
+  approvalSign,
+  listApprovals,
+  createChangeLog,
+  listChangeLogs,
+  createDistributions,
+  listDistributions,
+  returnDistributionsBatch,
+  deleteDistribution,
 } from '@/api/process_document'
 import { listEquipments } from '@/api/equipment'
+import { generateDocNo, previewDocNo } from '@/api/doc_no_rules'
 import {
   getFormRecord,
   getFormTemplate,
@@ -736,6 +1088,10 @@ import {
   createFormRecord,
   exportFormRecord,
   downloadTemplateRefFile,
+  auditFormRecord,
+  listAmendments,
+  createAmendment,
+  approveAmendment,
 } from '@/api/form_template'
 import { listFormTemplates } from '@/api/form_template'
 import { useUserStore } from '@/stores'
@@ -745,6 +1101,11 @@ const userStore = useUserStore()
 const canWrite = computed(() => userStore.can('process_doc.write'))
 const canDelete = computed(() => userStore.can('process_doc.delete'))
 const canFill = computed(() => userStore.can('form_record.fill'))
+// 文控扩展权限
+const canSubmitReview = computed(() => userStore.can('process_doc.submit_review'))
+const canApprove = computed(() => userStore.can('process_doc.approve'))
+const canAuditForm = computed(() => userStore.can('form_record.audit'))
+const canAmendForm = computed(() => userStore.can('form_record.amend'))
 
 // 文件类型选项（按大类区分）
 const guideDocTypes = ['Recipe', 'Flowchart', 'Spec', '其他']
@@ -756,9 +1117,37 @@ const docTypeLabels = {
 }
 const docTypeLabel = (t) => docTypeLabels[t] || t
 
-const statusOptions = ['草稿', '生效', '作废']
-const docStatusTag = (s) => ({ 草稿: 'info', 生效: 'success', 作废: 'danger' }[s] || 'info')
+const statusOptions = ['草稿', '审核中', '生效', '作废']
+const docStatusTag = (s) => ({ 草稿: 'info', 审核中: 'warning', 生效: 'success', 作废: 'danger', 已审核: 'success' }[s] || 'info')
 const shiftTag = (s) => ({ A: 'danger', B: 'primary', C: 'warning' }[s] || 'info')
+
+// 复审告警：是否即将到期
+function isReviewDue(row) {
+  if (!row.next_review_date) return false
+  const d = new Date(row.next_review_date)
+  const now = new Date()
+  const diffDays = (d - now) / (1000 * 60 * 60 * 24)
+  return diffDays <= 30
+}
+function reviewDueLabel(row) {
+  if (!row.next_review_date) return ''
+  const d = new Date(row.next_review_date)
+  const now = new Date()
+  const diffDays = Math.ceil((d - now) / (1000 * 60 * 60 * 24))
+  if (diffDays < 0) return `已过期${-diffDays}天`
+  if (diffDays === 0) return '今日到期'
+  return `${diffDays}天后到期`
+}
+
+// 文控分类选项
+const docClassOptions = [
+  { value: 'SOP', label: 'SOP 作业指导书' },
+  { value: 'SIP', label: 'SIP 检验标准' },
+  { value: 'SPEC', label: 'SPEC 规格书' },
+  { value: 'FORM', label: 'FORM 表单模板' },
+  { value: 'RECORD', label: 'RECORD 作业记录' },
+  { value: 'EXTERN', label: 'EXTERN 外来文件' },
+]
 
 const activeCategory = ref('guide')
 const activeCategoryLabel = computed(() => (activeCategory.value === 'guide' ? '指导性文件' : '作业记录文件'))
@@ -817,6 +1206,7 @@ const uploadFormRef = ref(null)
 const uploadForm = reactive({
   equipment_id: null, file: null, doc_name: '', doc_type: '', version: '',
   batch_no: '', shift: '', production_date: '', description: '',
+  doc_no: '', doc_class: '', review_cycle_month: null,
 })
 const uploadRules = {
   equipment_id: [{ required: true, message: '请选择机台', trigger: 'change' }],
@@ -831,12 +1221,43 @@ const uploadRules = {
   ],
 }
 
+// 编号生成
+const generatingNo = ref(false)
+const previewNo = ref('')
+
 function openUploadDialog() {
   Object.assign(uploadForm, {
     equipment_id: null, file: null, doc_name: '', doc_type: '', version: '',
     batch_no: '', shift: '', production_date: '', description: '',
+    doc_no: '', doc_class: '', review_cycle_month: null,
   })
+  previewNo.value = ''
   uploadDialogVisible.value = true
+}
+
+async function onDocClassChange() {
+  previewNo.value = ''
+  if (!uploadForm.doc_class) return
+  try {
+    const res = await previewDocNo(uploadForm.doc_class, uploadForm.equipment_id)
+    previewNo.value = res.doc_no
+  } catch (e) {
+    // 规则未配置时静默
+  }
+}
+
+async function onGenerateDocNo() {
+  generatingNo.value = true
+  try {
+    const res = await generateDocNo(uploadForm.doc_class, uploadForm.equipment_id)
+    uploadForm.doc_no = res.doc_no
+    ElMessage.success(`编号已生成: ${res.doc_no}`)
+    previewNo.value = ''
+  } catch (e) {
+    ElMessage.error(e?.detail || '编号生成失败，请先在系统配置中定义编号规则')
+  } finally {
+    generatingNo.value = false
+  }
 }
 
 function onPickFile(file) {
@@ -857,6 +1278,9 @@ async function onUpload() {
     if (uploadForm.shift) meta.shift = uploadForm.shift
     if (uploadForm.production_date) meta.production_date = uploadForm.production_date
     if (uploadForm.description) meta.description = uploadForm.description
+    if (uploadForm.doc_no) meta.doc_no = uploadForm.doc_no
+    if (uploadForm.doc_class) meta.doc_class = uploadForm.doc_class
+    if (uploadForm.review_cycle_month) meta.review_cycle_month = uploadForm.review_cycle_month
     await uploadProcessDocument(uploadForm.file, meta)
     ElMessage.success('上传成功')
     uploadDialogVisible.value = false
@@ -874,6 +1298,7 @@ const editFormRef = ref(null)
 const editForm = reactive({
   id: null, category: 'guide', doc_name: '', doc_type: '', version: '', effective_date: '',
   batch_no: '', shift: '', production_date: '', description: '', replaceFile: null,
+  doc_no: '', doc_class: '', review_cycle_month: null,
 })
 const editRules = {
   doc_name: [{ required: true, message: '请输入文件名称', trigger: 'blur' }],
@@ -892,6 +1317,9 @@ function openEditDialog(row) {
     production_date: row.production_date ? formatDate(row.production_date) : '',
     description: row.description || '',
     replaceFile: null,
+    doc_no: row.doc_no || '',
+    doc_class: row.doc_class || '',
+    review_cycle_month: row.review_cycle_month ?? null,
   })
   editDialogVisible.value = true
 }
@@ -909,10 +1337,13 @@ async function onSaveEdit() {
       doc_name: editForm.doc_name,
       doc_type: editForm.doc_type || null,
       description: editForm.description || null,
+      doc_no: editForm.doc_no || null,
+      doc_class: editForm.doc_class || null,
     }
     if (editForm.category === 'guide') {
       payload.version = editForm.version || null
       payload.effective_date = editForm.effective_date || null
+      payload.review_cycle_month = editForm.review_cycle_month ?? null
     } else {
       payload.batch_no = editForm.batch_no || null
       payload.shift = editForm.shift || null
@@ -1276,6 +1707,312 @@ function onExportRecord(row, format = 'csv') {
   const id = row.form_record_id || row.id
   if (!id) return
   exportFormRecord(id, format).catch((e) => ElMessage.error(e?.message || '导出失败'))
+}
+
+// ==================== 文控：审批链对话框 ====================
+const approvalDialogVisible = ref(false)
+const approvalLoading = ref(false)
+const approvalTarget = ref(null)
+const approvalStage = ref('prepare')
+const approvalForm = reactive({
+  password: '',
+  comment: '',
+})
+const approvalList = ref([])
+
+const stageLabelMap = {
+  prepare: '编制签名 / 提交审核',
+  review: '审核（QA 审核）',
+  approve: '批准（最终批准生效）',
+}
+
+async function openApprovalDialog(row, stage) {
+  approvalTarget.value = row
+  approvalStage.value = stage
+  approvalForm.password = ''
+  approvalForm.comment = ''
+  approvalList.value = []
+  approvalDialogVisible.value = true
+  try {
+    approvalList.value = await listApprovals(row.id)
+  } catch (e) { /* 静默 */ }
+}
+
+const approvalStageOptions = [
+  { value: 'prepare', label: '通过（提交审核）' },
+  { value: 'review', label: '通过（审核通过）' },
+  { value: 'approve', label: '通过（批准生效）' },
+  { value: 'reject_prepare', label: '驳回（退回草稿）' },
+  { value: 'reject_review', label: '驳回（审核退回）' },
+]
+
+async function onConfirmApproval(reject = false) {
+  try {
+    if (!approvalForm.password) throw new Error('请输入二次校验密码（电子签名要求）')
+    approvalLoading.value = true
+    let stage = approvalStage.value
+    if (reject) stage = stage === 'prepare' ? 'reject_prepare' : 'reject_review'
+    if (reject && !approvalForm.comment) throw new Error('驳回必须填写意见')
+    await approvalSign({
+      process_document_id: approvalTarget.value.id,
+      stage,
+      password: approvalForm.password,
+      comment: approvalForm.comment || null,
+    })
+    ElMessage.success(reject ? '已驳回' : '电子签名成功，状态已更新')
+    approvalDialogVisible.value = false
+    load()
+  } catch (e) {
+    ElMessage.error(e?.detail || e?.message || '签名失败')
+  } finally {
+    approvalLoading.value = false
+  }
+}
+
+// ==================== 文控：修订记录对话框 ====================
+const changeLogDialogVisible = ref(false)
+const changeLogTarget = ref(null)
+const changeLogList = ref([])
+const changeLogSaving = ref(false)
+const changeLogForm = reactive({
+  change_reason: 'ENG_CHG',
+  change_summary: '',
+  detail_text: '', // 每行一条变更，前端转成 detail_items 数组
+})
+
+const changeReasonOptions = [
+  { value: 'NEW', label: '新建发布' },
+  { value: 'REV_VOID', label: '作废换版' },
+  { value: 'REV_SPEC', label: '规格变更' },
+  { value: 'REV_STEP', label: '步骤/参数修订' },
+  { value: 'ENG_CHG', label: '工程变更(ECN)' },
+  { value: 'QC_NC', label: '品质不符合纠正' },
+  { value: 'CUSTOMER', label: '客户要求' },
+]
+
+async function openChangeLogDialog(row) {
+  changeLogTarget.value = row
+  changeLogForm.change_reason = 'ENG_CHG'
+  changeLogForm.change_summary = ''
+  changeLogForm.detail_text = ''
+  changeLogList.value = []
+  changeLogDialogVisible.value = true
+  try {
+    changeLogList.value = await listChangeLogs(row.id)
+  } catch (e) { /* 静默 */ }
+}
+
+async function onSaveChangeLog() {
+  try {
+    if (!changeLogForm.change_summary) throw new Error('请填写变更摘要')
+    changeLogSaving.value = true
+    const detail_items = (changeLogForm.detail_text || '')
+      .split('\n').map((s) => s.trim()).filter(Boolean)
+      .map((line, idx) => ({
+        seq: idx + 1,
+        change_type: 'M',
+        before: '',
+        after: line,
+        impact: '',
+      }))
+    await createChangeLog({
+      process_document_id: changeLogTarget.value.id,
+      change_reason: changeLogForm.change_reason,
+      change_summary: changeLogForm.change_summary,
+      detail_items: detail_items.length ? detail_items : null,
+    })
+    ElMessage.success('修订记录已保存')
+    changeLogForm.change_summary = ''
+    changeLogForm.detail_text = ''
+    changeLogList.value = await listChangeLogs(changeLogTarget.value.id)
+  } catch (e) {
+    ElMessage.error(e?.detail || e?.message || '保存失败')
+  } finally {
+    changeLogSaving.value = false
+  }
+}
+
+// ==================== 文控：分发记录对话框 ====================
+const distDialogVisible = ref(false)
+const distTarget = ref(null)
+const distList = ref([])
+const distSaving = ref(false)
+const distForm = reactive({
+  recipient_type: 'USER',
+  recipient_ref: '',
+  hold_copies: 1,
+  medium: 'E',
+})
+const distSelected = ref([])
+
+const recipientTypeOptions = [
+  { value: 'USER', label: '按用户' },
+  { value: 'ROLE', label: '按角色' },
+  { value: 'DEPARTMENT', label: '按部门' },
+]
+const mediumOptions = [
+  { value: 'E', label: '电子' },
+  { value: 'P', label: '纸质' },
+]
+
+async function openDistDialog(row) {
+  distTarget.value = row
+  distForm.recipient_type = 'USER'
+  distForm.recipient_ref = ''
+  distForm.hold_copies = 1
+  distForm.medium = 'E'
+  distList.value = []
+  distSelected.value = []
+  distDialogVisible.value = true
+  try {
+    distList.value = await listDistributions(row.id)
+  } catch (e) { /* 静默 */ }
+}
+
+async function onSaveDistribution() {
+  try {
+    if (!distForm.recipient_ref) throw new Error('请填写接收人/角色/部门')
+    distSaving.value = true
+    await createDistributions({
+      process_document_id: distTarget.value.id,
+      recipient_type: distForm.recipient_type,
+      recipient_ref: distForm.recipient_ref,
+      hold_copies: distForm.hold_copies,
+      medium: distForm.medium,
+    })
+    ElMessage.success('分发已登记')
+    distForm.recipient_ref = ''
+    distSelected.value = []
+    distList.value = await listDistributions(distTarget.value.id)
+  } catch (e) {
+    ElMessage.error(e?.detail || e?.message || '保存失败')
+  } finally {
+    distSaving.value = false
+  }
+}
+
+async function onReturnBatch(note = '') {
+  try {
+    if (!distSelected.value.length) throw new Error('请勾选要收回的分发记录')
+    await returnDistributionsBatch({ ids: distSelected.value, return_note: note })
+    ElMessage.success('已收回选中的分发文件')
+    distSelected.value = []
+    distList.value = await listDistributions(distTarget.value.id)
+  } catch (e) {
+    ElMessage.error(e?.detail || e?.message || '收回失败')
+  }
+}
+
+async function onDeleteDistribution(id) {
+  try {
+    await ElMessageBox.confirm('确认删除该条分发明细？', '确认', { type: 'warning' })
+    await deleteDistribution(id)
+    distList.value = await listDistributions(distTarget.value.id)
+    ElMessage.success('已删除')
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error(e?.detail || e?.message || '删除失败')
+  }
+}
+
+// ==================== 文控：表单记录审核锁定 + 附加修正 ====================
+const auditDialogVisible = ref(false)
+const auditLoading = ref(false)
+const auditTarget = ref(null)
+const auditForm = reactive({ password: '', comment: '', reject: false })
+const amendmentList = ref([])
+const amendmentDialogVisible = ref(false)
+const amendmentSaving = ref(false)
+const amendmentForm = reactive({
+  field_key: '*',
+  field_label: '',
+  original_value: '',
+  corrected_value: '',
+  reason: '',
+  password: '',
+})
+
+async function openAuditDialog(row) {
+  if (!row.form_record_id) return
+  auditTarget.value = { form_record_id: row.form_record_id }
+  auditForm.password = ''
+  auditForm.comment = ''
+  auditForm.reject = false
+  amendmentList.value = []
+  auditDialogVisible.value = true
+  try {
+    amendmentList.value = await listAmendments(row.form_record_id)
+  } catch (e) { /* 静默 */ }
+}
+
+async function onConfirmAudit() {
+  try {
+    if (!auditForm.password) throw new Error('请输入二次校验密码')
+    auditLoading.value = true
+    await auditFormRecord({
+      record_id: auditTarget.value.form_record_id,
+      password: auditForm.password,
+      comment: auditForm.comment || null,
+      reject: !!auditForm.reject,
+    })
+    ElMessage.success(auditForm.reject ? '已驳回' : '审核通过，记录已锁定')
+    auditDialogVisible.value = false
+    load()
+  } catch (e) {
+    ElMessage.error(e?.detail || e?.message || '审核失败')
+  } finally {
+    auditLoading.value = false
+  }
+}
+
+async function openAmendmentDialog(row) {
+  if (!row.form_record_id) return
+  auditTarget.value = { form_record_id: row.form_record_id }
+  amendmentForm.field_key = '*'
+  amendmentForm.field_label = '附加说明'
+  amendmentForm.original_value = ''
+  amendmentForm.corrected_value = ''
+  amendmentForm.reason = ''
+  amendmentForm.password = ''
+  amendmentList.value = []
+  amendmentDialogVisible.value = true
+  try {
+    amendmentList.value = await listAmendments(row.form_record_id)
+  } catch (e) { /* 静默 */ }
+}
+
+async function onSaveAmendment() {
+  try {
+    if (!amendmentForm.reason) throw new Error('请填写修正原因')
+    if (!amendmentForm.password) throw new Error('请输入二次校验密码')
+    amendmentSaving.value = true
+    await createAmendment({
+      record_id: auditTarget.value.form_record_id,
+      field_key: amendmentForm.field_key,
+      field_label: amendmentForm.field_label || null,
+      original_value: amendmentForm.original_value || null,
+      corrected_value: amendmentForm.corrected_value || null,
+      reason: amendmentForm.reason,
+      password: amendmentForm.password,
+    })
+    ElMessage.success('附加修正已留痕')
+    amendmentForm.reason = ''
+    amendmentForm.password = ''
+    amendmentList.value = await listAmendments(auditTarget.value.form_record_id)
+  } catch (e) {
+    ElMessage.error(e?.detail || e?.message || '修正失败')
+  } finally {
+    amendmentSaving.value = false
+  }
+}
+
+async function onApproveAmendment(id, approve) {
+  try {
+    await approveAmendment(id, approve)
+    ElMessage.success(approve ? '已批准修正' : '已驳回修正')
+    amendmentList.value = await listAmendments(auditTarget.value.form_record_id)
+  } catch (e) {
+    ElMessage.error(e?.detail || e?.message || '操作失败')
+  }
 }
 
 onMounted(load)
