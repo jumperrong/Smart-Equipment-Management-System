@@ -741,7 +741,7 @@ def get_dashboard(db: Session, log_limit: int = 10, current_user=None) -> Dashbo
         )
         summary.amendments_pending = (
             db.query(FormRecordAmendment)
-            .filter(FormRecordAmendment.status == "PENDING")
+            .filter(FormRecordAmendment.approved.is_(None))
             .count()
         )
 
@@ -789,7 +789,7 @@ def get_dashboard(db: Session, log_limit: int = 10, current_user=None) -> Dashbo
             db.query(WorkOrder)
             .filter(
                 WorkOrder.assignee_id == user_id,
-                WorkOrder.sla_breached.is_(True),
+                WorkOrder.sla_breach.is_(True),
             )
             .count()
         )
@@ -847,7 +847,7 @@ def get_dashboard(db: Session, log_limit: int = 10, current_user=None) -> Dashbo
         top_recurrence_knowledge = [
             {"id": k.id, "title": k.title, "fault_category": k.fault_category,
              "symptom": k.symptom, "recurrence_count": k.recurrence_count,
-             "view_count": k.view_count}
+             "view_count": k.views}
             for k in top_rec_q
         ]
         from datetime import timedelta as _td3
@@ -855,18 +855,18 @@ def get_dashboard(db: Session, log_limit: int = 10, current_user=None) -> Dashbo
         lub_q = (
             db.query(LubricationPoint)
             .filter(
-                LubricationPoint.next_lubricated_date.isnot(None),
-                LubricationPoint.next_lubricated_date <= upcoming3,
+                LubricationPoint.next_lubrication_date.isnot(None),
+                LubricationPoint.next_lubrication_date <= upcoming3,
             )
-            .order_by(LubricationPoint.next_lubricated_date.asc())
+            .order_by(LubricationPoint.next_lubrication_date.asc())
             .limit(15)
             .all()
         )
         lubrication_due_list = [
             {"id": l.id, "equipment_id": l.equipment_id, "point_name": l.point_name,
-             "position": l.position, "oil_type": l.oil_type,
-             "next_lubricated_date": l.next_lubricated_date.isoformat() if l.next_lubricated_date else None,
-             "responsible_person": l.responsible_person}
+             "position": l.fixed_location, "oil_type": l.fixed_oil_type,
+             "next_lubrication_date": l.next_lubrication_date.isoformat() if l.next_lubrication_date else None,
+             "responsible_person": l.fixed_person_name}
             for l in lub_q
         ]
         summary.lubrication_due = len(lub_q)

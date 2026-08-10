@@ -252,8 +252,8 @@
         <el-table-column prop="responsible_person" label="负责人" width="120" />
         <el-table-column label="下次润滑日" width="160">
           <template #default="{ row }">
-            <span :class="{ 'alert-text': isPast(row.next_lubricated_date) }">
-              {{ row.next_lubricated_date ? formatTime(row.next_lubricated_date) : '-' }}
+            <span :class="{ 'alert-text': isPast(row.next_lubrication_date) }">
+              {{ row.next_lubrication_date ? formatTime(row.next_lubrication_date) : '-' }}
             </span>
           </template>
         </el-table-column>
