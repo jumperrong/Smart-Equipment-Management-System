@@ -8,14 +8,31 @@
       <el-menu
         :default-active="$route.path"
         :collapse="isCollapse"
+        :default-openeds="defaultOpeneds"
         router
         class="side-menu"
       >
-        <template v-for="r in menuRoutes" :key="r.path">
-          <el-menu-item :index="r.path">
-            <el-icon><component :is="r.meta.icon" /></el-icon>
-            <template #title>{{ r.meta.title }}</template>
+        <template v-for="g in menuGroups" :key="g.title">
+          <!-- 单项分组：直接渲染为菜单项（如总览、系统配置） -->
+          <el-menu-item v-if="g.items.length === 1" :index="g.items[0].path">
+            <el-icon><component :is="g.items[0].meta.icon" /></el-icon>
+            <template #title>{{ g.items[0].meta.title }}</template>
           </el-menu-item>
+          <!-- 多项分组：折叠子菜单 -->
+          <el-sub-menu v-else :index="g.title">
+            <template #title>
+              <el-icon><component :is="g.icon" /></el-icon>
+              <span>{{ g.title }}</span>
+            </template>
+            <el-menu-item
+              v-for="it in g.items"
+              :key="it.path"
+              :index="it.path"
+            >
+              <el-icon><component :is="it.meta.icon" /></el-icon>
+              <template #title>{{ it.meta.title }}</template>
+            </el-menu-item>
+          </el-sub-menu>
         </template>
       </el-menu>
     </el-aside>
@@ -97,11 +114,71 @@ function onThemeCommand(cmd) {
   setMode(cmd)
 }
 
-const menuRoutes = computed(() => {
+// 分级菜单配置：按职能域分组，系统配置永远最后（alwaysLast）
+// 单项分组渲染为直接菜单项；多项分组渲染为折叠子菜单
+const MENU_GROUPS = [
+  {
+    title: '总览',
+    icon: 'DataAnalysis',
+    names: ['Dashboard'],
+  },
+  {
+    title: '设备与资源',
+    icon: 'Tools',
+    names: ['Equipment', 'EquipmentLifecycle', 'Lubrication', 'SpareParts', 'AssetMgmt', 'Personnel'],
+  },
+  {
+    title: '运维与安全',
+    icon: 'Tickets',
+    names: ['Inspection', 'WorkOrders', 'PMPlans', 'SafetyInspection', 'EnvironmentLogs'],
+    defaultOpen: true,
+  },
+  {
+    title: '工艺文控',
+    icon: 'Document',
+    names: ['ProcessDocuments', 'FormTemplates', 'DocNoRules'],
+    defaultOpen: true,
+  },
+  {
+    title: '分析改进',
+    icon: 'TrendCharts',
+    names: ['OEE', 'Quality', 'KnowledgeBase', 'EquipmentCost'],
+  },
+  {
+    title: '系统配置',
+    icon: 'Setting',
+    names: ['SystemConfig'],
+    alwaysLast: true,
+  },
+]
+
+const menuGroups = computed(() => {
   const children = router.options.routes.find((r) => r.path === '/')?.children || []
-  return children
-    .filter((c) => c.meta?.title && !c.meta.hidden && (!c.meta.roles || userStore.hasRole(...c.meta.roles)))
-    .map((c) => ({ path: '/' + c.path, meta: c.meta }))
+  const byName = {}
+  children.forEach((c) => {
+    if (c.meta?.title && !c.meta.hidden) byName[c.name] = c
+  })
+  const groups = MENU_GROUPS.map((g) => {
+    const items = g.names
+      .filter((n) => byName[n])
+      .filter((n) => {
+        const c = byName[n]
+        return !c.meta.roles || userStore.hasRole(...c.meta.roles)
+      })
+      .map((n) => {
+        const c = byName[n]
+        return { path: '/' + c.path, meta: c.meta, name: c.name }
+      })
+    return { title: g.title, icon: g.icon, items, defaultOpen: g.defaultOpen }
+  })
+  // alwaysLast 的分组（系统配置）固定排到末尾
+  const normal = groups.filter((g) => !MENU_GROUPS.find((cfg) => cfg.title === g.title)?.alwaysLast)
+  const last = groups.filter((g) => MENU_GROUPS.find((cfg) => cfg.title === g.title)?.alwaysLast)
+  return [...normal, ...last].filter((g) => g.items.length > 0)
+})
+
+const defaultOpeneds = computed(() => {
+  return menuGroups.value.filter((g) => g.defaultOpen).map((g) => g.title)
 })
 
 const currentTitle = computed(() => route.meta.title || '')
@@ -232,5 +309,23 @@ function onCommand(cmd) {
 /* 暗色模式选中项霓虹发光 */
 html.dark :deep(.el-menu-item.is-active) {
   text-shadow: var(--app-glow-primary);
+}
+/* 折叠分组标题样式 */
+:deep(.el-sub-menu__title) {
+  color: var(--app-sidebar-text);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.3px;
+}
+:deep(.el-sub-menu__title:hover) {
+  background: var(--app-sidebar-hover);
+}
+:deep(.el-sub-menu .el-menu-item) {
+  font-size: 13px;
+  padding-left: 48px !important;
+}
+/* 折叠态下隐藏分组标题文字，仅显示图标 */
+:deep(.el-menu--collapse .el-sub-menu__title span) {
+  display: none;
 }
 </style>
