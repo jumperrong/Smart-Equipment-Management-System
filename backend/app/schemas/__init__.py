@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List
 from datetime import datetime
+from decimal import Decimal
 
 from app.models import (
     UserRole, EquipmentStatus, WorkOrderType, WorkOrderStatus, FaultCategory,
@@ -506,6 +507,15 @@ class WorkOrderOut(BaseModel):
     actual_start: Optional[datetime] = None
     actual_end: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    # SLA 字段
+    sla_response_minutes: Optional[int] = None
+    sla_resolution_minutes: Optional[int] = None
+    actual_response_minutes: Optional[int] = None
+    actual_resolution_minutes: Optional[int] = None
+    sla_breach: bool = False
+    escalated: bool = False
+    escalated_to_id: Optional[int] = None
+    escalated_at: Optional[datetime] = None
     remark: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -1431,4 +1441,319 @@ class FormRecordAmendmentOut(BaseModel):
             else:
                 self.status = "REJECTED"
         return self
+
+
+# ============ 模块 M: P0 安全检查 ============
+
+class SafetyInspectionBase(BaseModel):
+    equipment_id: int
+    check_type: str = Field(..., max_length=32, description="检查类型: safety_device/特种设备/环保/消防")
+    check_name: str = Field(..., max_length=255)
+    check_standard: Optional[str] = None
+    frequency: Optional[str] = Field(None, description="daily/weekly/monthly/quarterly/yearly")
+    last_check_date: Optional[datetime] = None
+    next_check_date: Optional[datetime] = None
+    result: str = "pending"
+    findings: Optional[str] = None
+    corrective_action: Optional[str] = None
+    checked_by_id: Optional[int] = None
+    checked_by_name: Optional[str] = None
+    certificate_no: Optional[str] = None
+    certificate_expiry: Optional[datetime] = None
+
+
+class SafetyInspectionCreate(SafetyInspectionBase):
+    pass
+
+
+class SafetyInspectionUpdate(BaseModel):
+    equipment_id: Optional[int] = None
+    check_type: Optional[str] = None
+    check_name: Optional[str] = None
+    check_standard: Optional[str] = None
+    frequency: Optional[str] = None
+    last_check_date: Optional[datetime] = None
+    next_check_date: Optional[datetime] = None
+    result: Optional[str] = None
+    findings: Optional[str] = None
+    corrective_action: Optional[str] = None
+    checked_by_id: Optional[int] = None
+    checked_by_name: Optional[str] = None
+    certificate_no: Optional[str] = None
+    certificate_expiry: Optional[datetime] = None
+
+
+class SafetyInspectionOut(SafetyInspectionBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SafetyInspectionCheckIn(BaseModel):
+    """执行检查的请求体。"""
+    result: str = Field(..., description="pending/pass/fail/n_a")
+    findings: Optional[str] = None
+    corrective_action: Optional[str] = None
+
+
+# ============ 模块 N: P1 工单 SLA ============
+
+class SLASetRequest(BaseModel):
+    """设置 SLA 目标。"""
+    sla_response_minutes: Optional[int] = Field(None, ge=0, description="SLA目标响应时长(分钟)")
+    sla_resolution_minutes: Optional[int] = Field(None, ge=0, description="SLA目标解决时长(分钟)")
+
+
+class SLAEscalateRequest(BaseModel):
+    """升级工单请求体。"""
+    escalated_to_id: int = Field(..., description="升级到的目标用户ID")
+    reassign: bool = Field(True, description="是否同时把工单指派给该上级")
+
+
+class SLAStatsOut(BaseModel):
+    """SLA 达成率统计响应。"""
+    total: int = 0
+    breached: int = 0
+    achieved: int = 0
+    achieve_rate: float = 0.0
+    avg_response_minutes: float = 0.0
+    avg_resolution_minutes: float = 0.0
+
+
+# ============ 模块5: P6 故障知识库 ============
+
+class KnowledgeEntryBase(BaseModel):
+    title: str = Field(..., max_length=255)
+    symptom: Optional[str] = None
+    fault_category: Optional[str] = Field(None, max_length=64)
+    equipment_id: Optional[int] = None
+    equipment_model: Optional[str] = Field(None, max_length=128)
+    root_cause: Optional[str] = None
+    solution: Optional[str] = None
+    prevention: Optional[str] = None
+    source_work_order_id: Optional[int] = None
+    tags: Optional[str] = Field(None, max_length=512)
+    status: str = "active"
+
+
+class KnowledgeEntryCreate(KnowledgeEntryBase):
+    pass
+
+
+class KnowledgeEntryUpdate(BaseModel):
+    title: Optional[str] = Field(None, max_length=255)
+    symptom: Optional[str] = None
+    fault_category: Optional[str] = Field(None, max_length=64)
+    equipment_id: Optional[int] = None
+    equipment_model: Optional[str] = Field(None, max_length=128)
+    root_cause: Optional[str] = None
+    solution: Optional[str] = None
+    prevention: Optional[str] = None
+    tags: Optional[str] = Field(None, max_length=512)
+    status: Optional[str] = None
+
+
+class KnowledgeEntryOut(KnowledgeEntryBase):
+    id: int
+    views: int = 0
+    recurrence_count: int = 0
+    created_by_id: Optional[int] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# 从工单归档为知识条目
+class KnowledgeFromWorkOrder(BaseModel):
+    """从工单归档为知识库条目(可选覆盖字段)。"""
+    title: Optional[str] = Field(None, max_length=255, description="留空则用工单标题")
+    tags: Optional[str] = Field(None, max_length=512)
+    equipment_model: Optional[str] = Field(None, max_length=128)
+    fault_category: Optional[str] = Field(None, max_length=64)
+
+
+# ============ 模块6: P7 设备成本 LCC ============
+
+class EquipmentCostBase(BaseModel):
+    equipment_id: int
+    cost_type: str = Field(..., max_length=32)
+    cost_date: Optional[datetime] = None
+    amount: Decimal = Field(..., description="金额")
+    description: Optional[str] = Field(None, max_length=500)
+    work_order_id: Optional[int] = None
+    spare_part_id: Optional[int] = None
+
+
+class EquipmentCostCreate(EquipmentCostBase):
+    pass
+
+
+class EquipmentCostUpdate(BaseModel):
+    cost_type: Optional[str] = Field(None, max_length=32)
+    cost_date: Optional[datetime] = None
+    amount: Optional[Decimal] = None
+    description: Optional[str] = Field(None, max_length=500)
+    work_order_id: Optional[int] = None
+    spare_part_id: Optional[int] = None
+
+
+class EquipmentCostOut(EquipmentCostBase):
+    id: int
+    recorded_by_id: Optional[int] = None
+    recorded_by_name: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ============ 模块 3: 设备生命周期 T0-T3 ============
+
+class EquipmentLifecycleBase(BaseModel):
+    equipment_id: int
+    stage: str = Field(..., max_length=16, description="阶段: T0选型/T1采购/T2安装调试/T3量产移交")
+    stage_date: Optional[datetime] = None
+    title: str = Field(..., max_length=255)
+    description: Optional[str] = None
+    # T0选型
+    vendor_candidates: Optional[str] = None
+    selected_vendor: Optional[str] = Field(None, max_length=255)
+    ur_summary: Optional[str] = None
+    # T1采购
+    po_no: Optional[str] = Field(None, max_length=128)
+    po_amount: Optional[Decimal] = None
+    delivery_date: Optional[datetime] = None
+    # T2安装调试
+    fat_date: Optional[datetime] = None
+    fat_result: Optional[str] = Field(None, max_length=16)
+    fat_notes: Optional[str] = None
+    sat_date: Optional[datetime] = None
+    sat_result: Optional[str] = Field(None, max_length=16)
+    sat_notes: Optional[str] = None
+    commissioning_date: Optional[datetime] = None
+    commissioning_notes: Optional[str] = None
+    # T3量产移交
+    handover_date: Optional[datetime] = None
+    handover_to: Optional[str] = Field(None, max_length=128)
+    acceptance_result: Optional[str] = Field(None, max_length=16)
+    acceptance_notes: Optional[str] = None
+    # 附件
+    attachment_path: Optional[str] = Field(None, max_length=512)
+    status: str = "in_progress"
+
+
+class EquipmentLifecycleCreate(EquipmentLifecycleBase):
+    pass
+
+
+class EquipmentLifecycleUpdate(BaseModel):
+    stage: Optional[str] = Field(None, max_length=16)
+    stage_date: Optional[datetime] = None
+    title: Optional[str] = Field(None, max_length=255)
+    description: Optional[str] = None
+    vendor_candidates: Optional[str] = None
+    selected_vendor: Optional[str] = None
+    ur_summary: Optional[str] = None
+    po_no: Optional[str] = None
+    po_amount: Optional[Decimal] = None
+    delivery_date: Optional[datetime] = None
+    fat_date: Optional[datetime] = None
+    fat_result: Optional[str] = None
+    fat_notes: Optional[str] = None
+    sat_date: Optional[datetime] = None
+    sat_result: Optional[str] = None
+    sat_notes: Optional[str] = None
+    commissioning_date: Optional[datetime] = None
+    commissioning_notes: Optional[str] = None
+    handover_date: Optional[datetime] = None
+    handover_to: Optional[str] = None
+    acceptance_result: Optional[str] = None
+    acceptance_notes: Optional[str] = None
+    attachment_path: Optional[str] = None
+    status: Optional[str] = None
+
+
+class EquipmentLifecycleOut(EquipmentLifecycleBase):
+    id: int
+    created_by_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ============ 模块 4: 润滑管理 ============
+
+class LubricationPointBase(BaseModel):
+    equipment_id: int
+    point_name: str = Field(..., max_length=128)
+    point_code: Optional[str] = Field(None, max_length=64)
+    # 五定
+    fixed_location: Optional[str] = Field(None, max_length=255)
+    fixed_person_id: Optional[int] = None
+    fixed_person_name: Optional[str] = Field(None, max_length=64)
+    fixed_frequency: Optional[str] = Field(None, max_length=32)
+    fixed_oil_type: Optional[str] = Field(None, max_length=128)
+    fixed_quantity: Optional[str] = Field(None, max_length=64)
+    # 计划
+    next_lubrication_date: Optional[datetime] = None
+    enabled: bool = True
+    remark: Optional[str] = None
+
+
+class LubricationPointCreate(LubricationPointBase):
+    pass
+
+
+class LubricationPointUpdate(BaseModel):
+    point_name: Optional[str] = Field(None, max_length=128)
+    point_code: Optional[str] = Field(None, max_length=64)
+    fixed_location: Optional[str] = None
+    fixed_person_id: Optional[int] = None
+    fixed_person_name: Optional[str] = None
+    fixed_frequency: Optional[str] = None
+    fixed_oil_type: Optional[str] = None
+    fixed_quantity: Optional[str] = None
+    next_lubrication_date: Optional[datetime] = None
+    enabled: Optional[bool] = None
+    remark: Optional[str] = None
+
+
+class LubricationPointOut(LubricationPointBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class LubricationRecordBase(BaseModel):
+    point_id: int
+    lubrication_date: Optional[datetime] = None
+    oil_type_used: Optional[str] = Field(None, max_length=128)
+    quantity_used: Optional[str] = Field(None, max_length=64)
+    performed_by_id: Optional[int] = None
+    performed_by_name: Optional[str] = Field(None, max_length=64)
+    result: str = "done"
+    notes: Optional[str] = None
+
+
+class LubricationRecordCreate(LubricationRecordBase):
+    pass
+
+
+class LubricationRecordOut(LubricationRecordBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 

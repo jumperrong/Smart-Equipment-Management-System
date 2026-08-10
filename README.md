@@ -18,6 +18,12 @@ Semiconductor Equipment Management System
 - **局域网安全加固**：密码策略、账户锁定、JWT 访问+刷新令牌、敏感操作审计、强制首次改密、CSP/X-Frame 响应头（见「安全加固」章节）。
 - **低成本灾备（3-2-1）**：备份加密、NAS/SMB 异地副本、烟雾还原测试、系统级旁路 cron/任务计划备份脚本（见「灾备方案」章节）。
 - **📑 文控系统（符合体系标准）**：三级电子签名审批链（编制→审核→批准）+ SHA256 签名指纹、状态机白名单（草稿→审核中→生效→作废）、文档编号规则、修订记录（字段级 before/after）、分发收回台账、PDF 水印受控章、表单审核锁定 + 附加修正、复审周期告警、QA 角色权限矩阵（见「文控系统」章节）。
+- **🛡 安全检查模块**：安全装置定期检查（防护罩/急停/联锁）、特种设备检验日历、证书到期告警、检查执行 + 整改措施跟踪（见「安全检查」章节）。
+- **⏱ 工单 SLA / 升级**：SLA 目标响应/解决时长、实际响应/解决时长自动计算、SLA 违约标记、超时升级指派、SLA 达成率统计。
+- **🔄 设备生命周期 T0-T3**：选型(T0)→采购(T1)→安装调试(T2,FAT/SAT)→量产移交(T3)全流程，含采购金额/验收结果/时间线展示。
+- **🛢 润滑管理（五定）**：润滑点定义（定点/定人/定时/定质/定量）、润滑计划 + 到期告警、润滑执行记录、频次自动推算下次润滑日。
+- **📚 故障知识库**：工单归档为知识条目（根因/处置/预防自动填充）、全文检索、相似案例推荐、复发次数追踪、浏览统计。
+- **💰 设备成本 LCC**：单设备全生命周期成本汇总（采购/维护/备件/能耗/折旧/报废）、按类型统计 + 年度趋势 + Top10 高成本设备。
 
 ---
 
@@ -889,6 +895,183 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 | GET/POST/PUT/DELETE | `/api/v1/doc-no-rules` | 文档编号规则 CRUD |
 
 相关代码：[models/__init__.py](file:///workspace/backend/app/models/__init__.py)（DocNoRule / DocumentApproval / DocumentChangeLog / DocumentDistribution / FormRecordAmendment）· [api/v1/process_doc_qc.py](file:///workspace/backend/app/api/v1/process_doc_qc.py) · [api/v1/form_record_qc.py](file:///workspace/backend/app/api/v1/form_record_qc.py) · [services/pdf_watermark.py](file:///workspace/backend/app/services/pdf_watermark.py) · [views/ProcessDocuments.vue](file:///workspace/frontend/src/views/ProcessDocuments.vue)
+
+---
+
+## 🚀 设备管理扩展模块（合规 / 全生命周期 / 数据价值）
+
+基于晶名设备部门现状摸底，补齐以下三大侧、六个模块。所有模块已在后端注册路由、前端注册页面与菜单，随启动数据库自动建表，开箱即用。
+
+### 路由与页面总览
+
+| 模块 | 后端路由前缀 | 前端页面 | 菜单位置 |
+|------|-------------|----------|----------|
+| 安全检查（P0） | `/api/v1/safety-inspections` | [SafetyInspection.vue](file:///workspace/frontend/src/views/SafetyInspection.vue) | 合规安全 |
+| 工单 SLA / 升级（P1） | `/api/v1/work-order-sla` + `/api/v1/work-orders`（SLA 字段扩展） | [WorkOrderSLA.vue](file:///workspace/frontend/src/views/WorkOrderSLA.vue) | 日常运维 |
+| 设备生命周期 T0-T3（P2） | `/api/v1/equipment-lifecycle` | [EquipmentLifecycle.vue](file:///workspace/frontend/src/views/EquipmentLifecycle.vue) | 设备全生命周期 |
+| 润滑管理五定（P3） | `/api/v1/lubrication` | [Lubrication.vue](file:///workspace/frontend/src/views/Lubrication.vue) | 设备全生命周期 |
+| 故障知识库（P6） | `/api/v1/knowledge` | [KnowledgeBase.vue](file:///workspace/frontend/src/views/KnowledgeBase.vue) | 数据价值 |
+| 设备成本 LCC（P7） | `/api/v1/equipment-costs` | [EquipmentCost.vue](file:///workspace/frontend/src/views/EquipmentCost.vue) | 数据价值 |
+
+相关代码：[models/__init__.py](file:///workspace/backend/app/models/__init__.py)（`SafetyInspection` / `WorkOrder` SLA 字段 / `EquipmentLifecycle` / `LubricationPoint` / `LubricationRecord` / `KnowledgeEntry` / `EquipmentCost`）· [api/v1/safety_inspection.py](file:///workspace/backend/app/api/v1/safety_inspection.py) · [api/v1/work_order_sla.py](file:///workspace/backend/app/api/v1/work_order_sla.py) · [api/v1/equipment_lifecycle.py](file:///workspace/backend/app/api/v1/equipment_lifecycle.py) · [api/v1/lubrication.py](file:///workspace/backend/app/api/v1/lubrication.py) · [api/v1/knowledge_base.py](file:///workspace/backend/app/api/v1/knowledge_base.py) · [api/v1/equipment_cost.py](file:///workspace/backend/app/api/v1/equipment_cost.py)
+
+---
+
+### 🛡 安全检查（P0 合规安全侧 · 风险最高）
+
+针对 EHS 合规风险最高的一项单独建模，覆盖安全装置、特种设备、环保、消防四类检查。
+
+#### 数据模型
+
+- `SafetyInspection`：检查项主表
+  - `check_type`：检查类型（`safety_device` / `special_equipment` / `environmental` / `fire_protection`）
+  - `frequency`：检查频次（`daily` / `weekly` / `monthly` / `quarterly` / `yearly`），用于自动推算下次检查日
+  - `last_check_date` / `next_check_date`：上次检查 / 下次检查日
+  - `result`：检查结果（`pending` / `pass` / `fail` / `n_a`）
+  - `findings` / `corrective_action`：检查发现 / 整改措施
+  - `certificate_no` / `certificate_expiry`：特种设备检验证书编号 / 到期日（仅特种设备类）
+
+#### 功能
+
+| 操作 | 路径 | 说明 |
+|------|------|------|
+| 列表查询 | `GET /api/v1/safety-inspections` | 支持按设备/类型/结果筛选，支持 `upcoming_days`（默认 30 天）筛选即将到期/已过期项 |
+| 新建/编辑/删除 | `POST/PUT/DELETE /api/v1/safety-inspections[/{id}]` | 维护检查项主数据 |
+| 执行检查 | `POST /api/v1/safety-inspections/{id}/check` | 提交结果/发现/整改，自动按频次推算下次检查日 |
+| 告警列表 | `GET /api/v1/safety-inspections/alerts` | 拉取 30 天内到期或已逾期项，前端 Badge 计数 |
+
+> 前端表格对「下次检查」与「证书到期」日期自动高亮：30 天内黄底、已逾期红字；告警按钮显示待办数量徽标。
+
+---
+
+### ⏱ 工单 SLA / 升级（P1 合规安全侧）
+
+在 `WorkOrder` 模型上扩展 SLA 字段，避免单独立表带来的维护负担。
+
+#### 数据字段（扩展 `WorkOrder`）
+
+- `sla_response_target_min` / `sla_resolution_target_min`：目标响应时长 / 目标解决时长（分钟）
+- `responded_at` / `resolved_at`：实际响应 / 实际解决时间
+- `sla_response_min` / `sla_resolution_min`：实际响应 / 实际解决时长（自动计算）
+- `sla_breached`：是否违约（布尔）
+- `escalated_to_id`：超时升级指派人 ID
+- `priority`：紧急度（与原有紧急度一致，用于 SLA 模板预设）
+
+#### 功能
+
+| 操作 | 路径 | 说明 |
+|------|------|------|
+| 设置/更新 SLA 目标 | `PUT /api/v1/work-orders/{id}` 或 `PUT /api/v1/work-order-sla/{id}/targets` | 设定响应/解决时长目标 |
+| 标记响应 | `POST /api/v1/work-order-sla/{id}/respond` | 记录实际响应时间，自动计算 `sla_response_min` |
+| 标记解决 | `POST /api/v1/work-order-sla/{id}/resolve` | 记录实际解决时间，自动计算 `sla_resolution_min` 与 `sla_breached` |
+| 超时升级 | `POST /api/v1/work-order-sla/{id}/escalate` | 标记超时并指派升级人 |
+| SLA 统计 | `GET /api/v1/work-order-sla/stats` | SLA 达成率、平均响应/解决时长、违约数 |
+
+---
+
+### 🔄 设备生命周期 T0-T3（P2 全生命周期侧 · 体系完整性）
+
+按选型 → 采购 → 安装调试 → 量产移交四阶段建模，一个阶段一条记录，便于时间线展示。
+
+#### 数据模型
+
+- `EquipmentLifecycle`：阶段记录表
+  - `stage`：`T0`（选型）/ `T1`（采购）/ `T2`（安装调试）/ `T3`（量产移交）
+  - **T0 选型**：`vendor_candidates`（JSON 候选供应商列表）/ `selected_vendor` / `ur_summary`（URS 用户需求摘要）
+  - **T1 采购**：`po_no` / `po_amount` / `delivery_date`
+  - **T2 安装调试**：`fat_date` / `fat_result` / `fat_notes`、`sat_date` / `sat_result` / `sat_notes`、`commissioning_date` / `commissioning_notes`
+  - **T3 量产移交**：`handover_date` / `handover_to` / `acceptance_result` / `acceptance_notes`
+  - `attachment_path`：附件路径（FAT/SAT 报告等）
+  - `status`：`in_progress` / `completed` / `aborted`
+
+#### 功能
+
+| 操作 | 路径 | 说明 |
+|------|------|------|
+| 阶段列表 | `GET /api/v1/equipment-lifecycle` | 支持按设备/阶段筛选 |
+| 新建阶段 | `POST /api/v1/equipment-lifecycle` | 新建任意阶段（建议按 T0→T3 顺序补齐） |
+| 编辑/删除 | `PUT/DELETE /api/v1/equipment-lifecycle/{id}` | 修改或删除阶段 |
+| 标记完成 | `POST /api/v1/equipment-lifecycle/{id}/complete` | 阶段流转到 `completed` |
+
+> 前端页面按时间倒序展示各阶段卡片，并以时间线串联 T0→T3，便于设备主管一眼看全流程进度。
+
+---
+
+### 🛢 润滑管理（五定）（P3 全生命周期侧）
+
+落实"定点、定人、定时、定质、定量"五定原则。
+
+#### 数据模型
+
+- `LubricationPoint`：润滑点定义（五定）
+  - `equipment_id` / `point_name` / `position`（定点）
+  - `responsible_person`（定人）
+  - `frequency` / `interval_days`（定时）
+  - `oil_type` / `oil_grade`（定质）
+  - `quantity` / `unit`（定量）
+  - `last_lubricated_date` / `next_lubricated_date`：上次/下次润滑日
+- `LubricationRecord`：润滑执行记录
+  - 关联 `LubricationPoint`，记录执行人、实际用量、备注
+
+#### 功能
+
+| 操作 | 路径 | 说明 |
+|------|------|------|
+| 润滑点 CRUD | `/api/v1/lubrication/points[/{id}]` | 维护润滑点主数据 |
+| 执行润滑 | `POST /api/v1/lubrication/points/{id}/record` | 提交执行记录，自动按 `interval_days` 推算下次润滑日 |
+| 到期告警 | `GET /api/v1/lubrication/due` | 拉取即将到期/已逾期润滑点 |
+
+---
+
+### 📚 故障知识库（P6 数据价值侧 · 精益化阶段）
+
+将历史故障工单沉淀为可检索的故障知识，支持相似案例推荐与复发次数追踪。
+
+#### 数据模型
+
+- `KnowledgeEntry`：知识条目
+  - `title` / `fault_category` / `symptom`（故障现象）
+  - `root_cause`（根因）/ `solution`（处置）/ `prevention`（预防）
+  - `equipment_id` / `work_order_id`：来源工单（可空）
+  - `tags`（标签，CSV）/ `keywords`（关键词，CSV）
+  - `recurrence_count`：复发次数（用于追踪是否同一根因复发）
+  - `view_count`：浏览次数
+
+#### 功能
+
+| 操作 | 路径 | 说明 |
+|------|------|------|
+| 知识列表 | `GET /api/v1/knowledge` | 支持按设备/分类/关键词全文检索 |
+| 从工单归档 | `POST /api/v1/knowledge/from-workorder/{wo_id}` | 把工单的故障分析/根因/处置/预防自动填充为知识条目 |
+| 知识 CRUD | `POST/PUT/DELETE /api/v1/knowledge[/{id}]` | 手动维护知识 |
+| 相似案例 | `GET /api/v1/knowledge/{id}/similar` | 基于设备 + 故障分类 + 关键词推荐相似案例 |
+| 增加复发 | `POST /api/v1/knowledge/{id}/recurrence` | 标记同根因复发，`recurrence_count + 1` |
+| 增加浏览 | `POST /api/v1/knowledge/{id}/view` | `view_count + 1`，用于热度排序 |
+
+---
+
+### 💰 设备成本 LCC（P7 数据价值侧 · 精益化阶段）
+
+单设备全生命周期成本汇总与统计分析。
+
+#### 数据模型
+
+- `EquipmentCost`：成本记录
+  - `equipment_id`：关联设备
+  - `cost_type`：成本类型（`purchase` 采购 / `maintenance` 维护 / `spare_part` 备件 / `energy` 能耗 / `depreciation` 折旧 / `disposal` 报废）
+  - `amount`：金额
+  - `occurred_date`：发生日期
+  - `remark` / `ref_type` / `ref_id`：备注与来源类型（如工单/PM 计划）
+
+#### 功能
+
+| 操作 | 路径 | 说明 |
+|------|------|------|
+| 成本记录 CRUD | `/api/v1/equipment-costs[/{id}]` | 按设备维护成本明细 |
+| 单设备汇总 | `GET /api/v1/equipment-costs/equipment/{eq_id}/summary` | 单设备各类成本汇总 + 总成本 |
+| 按类型统计 | `GET /api/v1/equipment-costs/stats/by-type` | 按成本类型汇总（饼图） |
+| 年度趋势 | `GET /api/v1/equipment-costs/stats/yearly-trend` | 按年汇总（折线图） |
+| Top10 高成本设备 | `GET /api/v1/equipment-costs/stats/top-equipment` | 排名前 10 的高成本设备 |
 
 ---
 

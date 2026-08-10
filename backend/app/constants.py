@@ -95,6 +95,14 @@ _FEATURES_DEF = [
     ("process_doc.view_effective",     "只看生效版",            "工艺文件", ["admin", "process_engineer", "qa", "engineer", "operator"]),
     ("process_doc.view_all_versions",  "查看全部版本/历史版本",  "工艺文件", ["admin", "process_engineer", "qa", "engineer"]),
 
+    # 安全检查
+    ("safety.view",                "安全检查查看",                        "安全检查",     ["admin", "engineer", "qa"]),
+    ("safety.write",               "安全检查编辑/新增/执行检查",          "安全检查",     ["admin", "engineer", "qa"]),
+
+    # 工单 SLA
+    ("work_order.assign",          "工单SLA目标设置",                     "工单SLA",      ["admin", "qa"]),
+    ("work_order.sla_manage",      "工单SLA管理(统计/升级/重算)",         "工单SLA",      ["admin", "qa"]),
+
     # 表单模板与结构化记录
     ("form_template.manage",       "表单模板管理(新增/编辑/删除/停用)",   "表单与记录", ["admin", "process_engineer"]),
     ("form_record.fill",           "结构化表单记录填写与提交",              "表单与记录", ["admin", "engineer", "process_engineer", "operator"]),

@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, String, DateTime, ForeignKey, Boolean, Text, Enum as SAEnum,
-    Float, JSON, UniqueConstraint, Index, text,
+    Float, JSON, Numeric, UniqueConstraint, Index, text,
 )
 from sqlalchemy.orm import relationship
 from enum import Enum
@@ -49,7 +49,7 @@ class User(Base):
 
     status_logs = relationship("EquipmentStatusLog", back_populates="operator")
     inspection_records = relationship("InspectionRecord", back_populates="inspector")
-    work_orders = relationship("WorkOrder", back_populates="assignee")
+    work_orders = relationship("WorkOrder", back_populates="assignee", foreign_keys="WorkOrder.assignee_id")
     reports = relationship("RepairReport", back_populates="reporter")
     qualifications = relationship("Qualification", back_populates="user")
     training_attendees = relationship("TrainingAttendee", back_populates="user")
@@ -362,12 +362,21 @@ class WorkOrder(Base):
     actual_start = Column(DateTime, nullable=True)
     actual_end = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
+    # SLA 字段
+    sla_response_minutes = Column(Integer, nullable=True, comment="SLA目标响应时长(分钟)")
+    sla_resolution_minutes = Column(Integer, nullable=True, comment="SLA目标解决时长(分钟)")
+    actual_response_minutes = Column(Integer, nullable=True, comment="实际响应时长(分钟, 创建到首次受理)")
+    actual_resolution_minutes = Column(Integer, nullable=True, comment="实际解决时长(分钟, 创建到关闭)")
+    sla_breach = Column(Boolean, default=False, nullable=False, comment="SLA是否违约")
+    escalated = Column(Boolean, default=False, nullable=False, comment="是否已升级")
+    escalated_to_id = Column(Integer, ForeignKey("users.id"), nullable=True, comment="升级到谁")
+    escalated_at = Column(DateTime, nullable=True, comment="升级时间")
     remark = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     equipment = relationship("Equipment", back_populates="work_orders")
-    assignee = relationship("User", back_populates="work_orders")
+    assignee = relationship("User", back_populates="work_orders", foreign_keys=[assignee_id])
     five_whys = relationship("FiveWhy", back_populates="work_order", cascade="all, delete-orphan")
     spare_usages = relationship("SparePartUsage", back_populates="work_order", cascade="all, delete-orphan")
 
@@ -1069,3 +1078,158 @@ class FormRecordAmendment(Base):
     approved_at = Column(DateTime, nullable=True)
 
     record = relationship("FormRecord", back_populates="amendments")
+
+
+# ============ 模块 M: P0 安全检查 ============
+
+class SafetyInspection(Base):
+    """P0 安全检查（安全装置/特种设备/环保/消防）。"""
+    __tablename__ = "safety_inspections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    check_type = Column(String(32), nullable=False, comment="检查类型: safety_device/特种设备/环保/消防")
+    check_name = Column(String(255), nullable=False, comment="检查项目名称")
+    check_standard = Column(Text, nullable=True, comment="检查标准/要求")
+    frequency = Column(String(32), nullable=True, comment="频次: daily/weekly/monthly/quarterly/yearly")
+    last_check_date = Column(DateTime, nullable=True)
+    next_check_date = Column(DateTime, nullable=True, index=True)
+    result = Column(String(16), default="pending", comment="pending/pass/fail/n_a")
+    findings = Column(Text, nullable=True, comment="检查发现")
+    corrective_action = Column(Text, nullable=True, comment="整改措施")
+    checked_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    checked_by_name = Column(String(64), nullable=True)
+    certificate_no = Column(String(128), nullable=True, comment="特种设备检验证书编号")
+    certificate_expiry = Column(DateTime, nullable=True, comment="证书到期日")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    equipment = relationship("Equipment")
+
+
+# ============ 模块 3: 设备生命周期 T0-T3 ============
+
+class EquipmentLifecycle(Base):
+    """设备生命周期阶段记录"""
+    __tablename__ = "equipment_lifecycle"
+    id = Column(Integer, primary_key=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    stage = Column(String(16), nullable=False, comment="阶段: T0选型/T1采购/T2安装调试/T3量产移交")
+    stage_date = Column(DateTime, nullable=True, comment="阶段日期")
+    title = Column(String(255), nullable=False, comment="阶段标题")
+    description = Column(Text, nullable=True, comment="描述")
+    # T0选型
+    vendor_candidates = Column(Text, nullable=True, comment="候选供应商(JSON)")
+    selected_vendor = Column(String(255), nullable=True, comment="选定供应商")
+    ur_summary = Column(Text, nullable=True, comment="URS用户需求摘要")
+    # T1采购
+    po_no = Column(String(128), nullable=True, comment="采购订单号")
+    po_amount = Column(Numeric(12, 2), nullable=True, comment="采购金额")
+    delivery_date = Column(DateTime, nullable=True, comment="交货日期")
+    # T2安装调试
+    fat_date = Column(DateTime, nullable=True, comment="FAT出厂验收日期")
+    fat_result = Column(String(16), nullable=True, comment="FAT结果: pass/fail/conditional")
+    fat_notes = Column(Text, nullable=True, comment="FAT备注")
+    sat_date = Column(DateTime, nullable=True, comment="SAT现场验收日期")
+    sat_result = Column(String(16), nullable=True, comment="SAT结果")
+    sat_notes = Column(Text, nullable=True, comment="SAT备注")
+    commissioning_date = Column(DateTime, nullable=True, comment="安装调试日期")
+    commissioning_notes = Column(Text, nullable=True, comment="调试记录")
+    # T3量产移交
+    handover_date = Column(DateTime, nullable=True, comment="量产移交日期")
+    handover_to = Column(String(128), nullable=True, comment="移交给谁")
+    acceptance_result = Column(String(16), nullable=True, comment="验收结果: pass/fail/conditional")
+    acceptance_notes = Column(Text, nullable=True, comment="验收备注")
+    # 附件
+    attachment_path = Column(String(512), nullable=True, comment="附件路径(FAT报告/SAT报告等)")
+    status = Column(String(16), default="in_progress", comment="in_progress/completed/aborted")
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    equipment = relationship("Equipment")
+
+
+# ============ 模块 4: 润滑管理 ============
+
+class LubricationPoint(Base):
+    """润滑点定义（五定卡）"""
+    __tablename__ = "lubrication_points"
+    id = Column(Integer, primary_key=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    point_name = Column(String(128), nullable=False, comment="润滑部位名称")
+    point_code = Column(String(64), nullable=True, comment="润滑点编号")
+    # 五定
+    fixed_location = Column(String(255), nullable=True, comment="定点: 润滑位置描述")
+    fixed_person_id = Column(Integer, ForeignKey("users.id"), nullable=True, comment="定人: 负责人")
+    fixed_person_name = Column(String(64), nullable=True)
+    fixed_frequency = Column(String(32), nullable=True, comment="定时: 频次 daily/weekly/monthly/quarterly")
+    fixed_oil_type = Column(String(128), nullable=True, comment="定质: 润滑油/脂牌号")
+    fixed_quantity = Column(String(64), nullable=True, comment="定量: 每次用量")
+    # 计划
+    next_lubrication_date = Column(DateTime, nullable=True, index=True, comment="下次润滑日期")
+    enabled = Column(Boolean, default=True, nullable=False)
+    remark = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    equipment = relationship("Equipment")
+    records = relationship("LubricationRecord", back_populates="point", cascade="all, delete-orphan")
+
+
+class LubricationRecord(Base):
+    """润滑执行记录"""
+    __tablename__ = "lubrication_records"
+    id = Column(Integer, primary_key=True, index=True)
+    point_id = Column(Integer, ForeignKey("lubrication_points.id"), nullable=False, index=True)
+    lubrication_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    oil_type_used = Column(String(128), nullable=True, comment="实际使用油/脂牌号")
+    quantity_used = Column(String(64), nullable=True, comment="实际用量")
+    performed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    performed_by_name = Column(String(64), nullable=True)
+    result = Column(String(16), default="done", comment="done/abnormal")
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    point = relationship("LubricationPoint", back_populates="records")
+
+
+# ============ 模块5: P6 故障知识库 ============
+
+class KnowledgeEntry(Base):
+    """故障知识库条目"""
+    __tablename__ = "knowledge_entries"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False, comment="故障标题")
+    symptom = Column(Text, nullable=True, comment="故障现象描述")
+    fault_category = Column(String(64), nullable=True, comment="故障分类: mechanical/electrical/process/software/pneumatic/other")
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=True, index=True, comment="关联设备(可空,表示通用)")
+    equipment_model = Column(String(128), nullable=True, comment="设备型号(用于跨设备复用)")
+    root_cause = Column(Text, nullable=True, comment="根因分析")
+    solution = Column(Text, nullable=True, comment="处置措施")
+    prevention = Column(Text, nullable=True, comment="预防措施")
+    source_work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True, comment="来源工单ID")
+    tags = Column(String(512), nullable=True, comment="标签(逗号分隔)")
+    views = Column(Integer, default=0, nullable=False, comment="浏览次数")
+    recurrence_count = Column(Integer, default=0, nullable=False, comment="复发次数")
+    status = Column(String(16), default="active", comment="active/archived")
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_by_name = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    equipment = relationship("Equipment")
+
+
+# ============ 模块6: P7 设备成本 LCC ============
+
+class EquipmentCost(Base):
+    """设备成本记录"""
+    __tablename__ = "equipment_costs"
+    id = Column(Integer, primary_key=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=False, index=True)
+    cost_type = Column(String(32), nullable=False, comment="成本类型: procurement/maintenance/spare_part/energy/depreciation/scrap")
+    cost_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    amount = Column(Numeric(12, 2), nullable=False, comment="金额")
+    description = Column(String(500), nullable=True, comment="费用说明")
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True, comment="关联工单")
+    spare_part_id = Column(Integer, ForeignKey("spare_parts.id"), nullable=True, comment="关联备件")
+    recorded_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    recorded_by_name = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    equipment = relationship("Equipment")

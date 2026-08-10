@@ -5,6 +5,9 @@ from app.api.v1 import (
     quality, environment, personnel, asset, dashboard, dictionary, system,
     process_document, form_templates, form_records, doc_no_rules,
     process_doc_qc, form_record_qc,
+    safety_inspection, work_order_sla,
+    knowledge_base, equipment_cost,
+    equipment_lifecycle, lubrication,
 )
 
 api_router = APIRouter()
@@ -29,6 +32,12 @@ api_router.include_router(form_records.router)
 api_router.include_router(doc_no_rules.router)
 api_router.include_router(process_doc_qc.router)
 api_router.include_router(form_record_qc.router)
+api_router.include_router(safety_inspection.router)
+api_router.include_router(work_order_sla.router)
+api_router.include_router(knowledge_base.router)
+api_router.include_router(equipment_cost.router)
+api_router.include_router(equipment_lifecycle.router)
+api_router.include_router(lubrication.router)
 
 
 @api_router.get("/health")

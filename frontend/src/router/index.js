@@ -78,6 +78,39 @@ const routes = [
         component: () => import('@/views/ProcessDocuments.vue'),
         meta: { title: '工艺文件', icon: 'Document' },
       },
+      // 合规安全
+      {
+        path: 'safety-inspection',
+        name: 'SafetyInspection',
+        component: () => import('@/views/SafetyInspection.vue'),
+        meta: { title: '安全检查', icon: 'Warning' },
+      },
+      // 设备全生命周期
+      {
+        path: 'equipment-lifecycle',
+        name: 'EquipmentLifecycle',
+        component: () => import('@/views/EquipmentLifecycle.vue'),
+        meta: { title: '生命周期', icon: 'Connection' },
+      },
+      {
+        path: 'lubrication',
+        name: 'Lubrication',
+        component: () => import('@/views/Lubrication.vue'),
+        meta: { title: '润滑管理', icon: 'MagicStick' },
+      },
+      // 数据价值
+      {
+        path: 'knowledge-base',
+        name: 'KnowledgeBase',
+        component: () => import('@/views/KnowledgeBase.vue'),
+        meta: { title: '故障知识库', icon: 'Collection' },
+      },
+      {
+        path: 'equipment-cost',
+        name: 'EquipmentCost',
+        component: () => import('@/views/EquipmentCost.vue'),
+        meta: { title: '设备成本LCC', icon: 'Money' },
+      },
       {
         path: 'form-templates',
         name: 'FormTemplates',
