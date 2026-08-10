@@ -27,6 +27,7 @@
             <el-button type="primary" @click="loadList">搜索</el-button>
             <el-button type="success" @click="openForm()">新建条目</el-button>
             <el-button type="warning" @click="archiveDialogVisible = true">从工单归档</el-button>
+            <el-button type="warning" @click="d8ArchiveDialogVisible = true">从8D报告归档</el-button>
           </el-form-item>
         </el-form>
       </div>
@@ -107,6 +108,7 @@
           <el-descriptions-item label="浏览数">{{ detail.view_count }}</el-descriptions-item>
           <el-descriptions-item label="复发次数">{{ detail.recurrence_count }}</el-descriptions-item>
           <el-descriptions-item label="来源工单">{{ detail.source_work_order_id ? '#' + detail.source_work_order_id : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="来源8D报告">{{ detail.source_d8_report_id ? '#' + detail.source_d8_report_id : '-' }}</el-descriptions-item>
           <el-descriptions-item label="标签" :span="2">
             <el-tag v-for="t in tagsArray(detail.tags)" :key="t" size="small" class="kb-tag">{{ t }}</el-tag>
             <span v-if="!tagsArray(detail.tags).length">-</span>
@@ -200,6 +202,34 @@
         <el-button type="primary" :loading="archiveLoading" @click="onArchive">归档</el-button>
       </template>
     </el-dialog>
+
+    <!-- ============ 从8D报告归档对话框 ============ -->
+    <el-dialog v-model="d8ArchiveDialogVisible" title="从8D报告归档" width="520px">
+      <el-form label-width="100px">
+        <el-form-item label="8D报告">
+          <el-select v-model="d8ArchiveId" filterable placeholder="选择8D报告" style="width: 100%">
+            <el-option
+              v-for="r in d8Reports"
+              :key="r.id"
+              :label="`${r.report_no} - ${r.title}`"
+              :value="r.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="故障分类">
+          <el-select v-model="d8ArchiveCategory" placeholder="自动" clearable style="width: 100%">
+            <el-option v-for="c in FAULT_CATEGORY_OPTIONS" :key="c" :label="faultCategoryLabel(c)" :value="c" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-input v-model="d8ArchiveTags" placeholder="留空自动生成 8D,报告编号" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="d8ArchiveDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="d8ArchiveLoading" @click="onD8Archive">归档</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -208,6 +238,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/api/request'
 import { listEquipments } from '@/api/equipment'
+import { listD8 } from '@/api/quality'
 
 const base = '/api/v1/knowledge'
 
@@ -416,8 +447,45 @@ async function onArchive() {
   }
 }
 
+// ---------- 从8D报告归档 ----------
+const d8ArchiveDialogVisible = ref(false)
+const d8ArchiveId = ref(null)
+const d8ArchiveCategory = ref(null)
+const d8ArchiveTags = ref('')
+const d8ArchiveLoading = ref(false)
+const d8Reports = ref([])
+
+async function loadD8Reports() {
+  try {
+    d8Reports.value = await listD8({ limit: 200 })
+  } catch (e) {}
+}
+
+async function onD8Archive() {
+  if (!d8ArchiveId.value) {
+    ElMessage.warning('请选择8D报告')
+    return
+  }
+  d8ArchiveLoading.value = true
+  try {
+    const payload = {}
+    if (d8ArchiveCategory.value) payload.fault_category = d8ArchiveCategory.value
+    if (d8ArchiveTags.value.trim()) payload.tags = d8ArchiveTags.value.trim()
+    const d = await request.post(`${base}/from-d8/${d8ArchiveId.value}`, payload)
+    ElMessage.success('归档成功')
+    d8ArchiveDialogVisible.value = false
+    d8ArchiveId.value = null
+    d8ArchiveCategory.value = null
+    d8ArchiveTags.value = ''
+    loadList()
+  } catch (e) {} finally {
+    d8ArchiveLoading.value = false
+  }
+}
+
 onMounted(async () => {
   await loadEquipments()
+  await loadD8Reports()
   await loadList()
 })
 </script>

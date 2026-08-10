@@ -229,7 +229,6 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
     # 不拦截的路径前缀（避免管理员被锁死）
     EXEMPT_PREFIXES = (
         "/api/v1/auth/login",
-        "/api/v1/auth/me",
         "/api/v1/system/settings/restart-server",  # 重启接口不拦截
         "/health",
     )

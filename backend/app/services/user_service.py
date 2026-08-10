@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import verify_password, get_password_hash, validate_password_strength
+from app.core.security import verify_password, get_password_hash, validate_password_strength, verify_password_detailed
 from app.models import User
 from app.schemas import UserCreate, UserUpdate
 
@@ -21,17 +21,20 @@ def get_user_by_username(db: Session, username: str) -> Optional[User]:
     return db.query(User).filter(User.username == username).first()
 
 
-def is_user_locked(user: User, now: Optional[datetime] = None) -> tuple[bool, int]:
-    """返回 (是否锁定, 剩余分钟数)。"""
+def is_user_locked(user: User, db: Optional[Session] = None, now: Optional[datetime] = None) -> tuple[bool, int]:
+    """返回 (是否锁定, 剩余分钟数)。锁定过期时自动清零计数 + 解锁并持久化。"""
     now = now or datetime.utcnow()
     if not user.locked_until:
         return False, 0
     if user.locked_until > now:
         remain = int((user.locked_until - now).total_seconds() // 60) + 1
         return True, max(1, remain)
-    # 锁定已过期：清零
+    # 锁定已过期：清零 + 同步到 DB（db 传空则仅内存态，下一次写操作仍会 flush）
     user.locked_until = None
     user.failed_login_count = 0
+    if db is not None:
+        db.add(user)
+        db.commit()
     return False, 0
 
 
@@ -71,12 +74,18 @@ def authenticate(db: Session, username: str, password: str) -> Optional[User]:
         pass
     if not user:
         return None
-    locked, _ = is_user_locked(user)
+    locked, _ = is_user_locked(user, db=db)
     if locked:
         return None
     if not verify_password(password, user.hashed_password):
         record_failed_login(db, user)
         return None
+    # 透明哈希升级：旧算法用户下次登录成功后自动迁移为新哈希（SHA-256 预哈希）
+    _matched, legacy_used = verify_password_detailed(password, user.hashed_password)
+    if legacy_used:
+        user.hashed_password = get_password_hash(password)
+        db.add(user)
+        db.commit()
     if not user.is_active:
         return None
     clear_failed_login(db, user)
@@ -89,9 +98,8 @@ def create_user(db: Session, obj_in: UserCreate) -> User:
     err = validate_password_strength(obj_in.password, settings.PASSWORD_MIN_LENGTH)
     if err:
         raise HTTPException(status_code=400, detail=f"新建用户失败：{err}")
-    # 若命中弱密码，标记首次登录必须改密
-    weak = validate_password_strength(obj_in.password, settings.PASSWORD_MIN_LENGTH) is not None
-    must_change = getattr(obj_in, "must_change_password", False) or weak
+    # 注：validate_password_strength 已覆盖弱密码字典校验，此处仅使用调用方显式传入的 must_change_password 标记
+    must_change = bool(getattr(obj_in, "must_change_password", False))
     now = datetime.utcnow()
     db_obj = User(
         username=obj_in.username,
@@ -177,7 +185,7 @@ def get_current_user(
     user = get_user_by_username(db, username)
     if user is None or not user.is_active:
         raise credentials_exception
-    locked, _ = is_user_locked(user)
+    locked, _ = is_user_locked(user, db=db)
     if locked:
         raise HTTPException(status_code=401, detail="账户已被锁定，请稍后再试或联系管理员解锁")
     return user

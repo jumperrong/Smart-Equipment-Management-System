@@ -59,7 +59,7 @@ def _build_doc_no(rule: DocNoRule, equipment: Optional[Equipment] = None, seq: O
 # ==================== 列表 ====================
 
 @router.get("", response_model=list[DocNoRuleOut])
-def list_doc_no_rules(db: Session = Depends(get_db)):
+def list_doc_no_rules(db: Session = Depends(get_db), _=Depends(get_current_user)):
     rules = db.query(DocNoRule).order_by(DocNoRule.doc_class).all()
     return rules
 
@@ -154,6 +154,7 @@ def preview_doc_no(
     doc_class: str,
     equipment_id: Optional[int] = None,
     db: Session = Depends(get_db),
+    _=Depends(get_current_user),
 ):
     """预览编号格式（不消耗流水号），用于前端实时展示。"""
     rule = db.query(DocNoRule).filter(DocNoRule.doc_class == doc_class).first()

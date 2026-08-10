@@ -309,9 +309,9 @@ const lubricationDue = ref([])
 const recentWorkOrders = ref([])
 
 // 设备表筛选
-const filterFactory = ref('')
-const filterArea = ref('')
-const filterStatus = ref('')
+const filterFactory = ref(null)
+const filterArea = ref(null)
+const filterStatus = ref(null)
 const filterKeyword = ref('')
 
 const statusOptionList = STATUS_OPTIONS
@@ -345,9 +345,9 @@ const filteredEquipments = computed(() => {
 })
 function onFilter() { /* 计算属性自动响应 */ }
 function resetFilter() {
-  filterFactory.value = ''
-  filterArea.value = ''
-  filterStatus.value = ''
+  filterFactory.value = null
+  filterArea.value = null
+  filterStatus.value = null
   filterKeyword.value = ''
 }
 
@@ -437,10 +437,27 @@ const kpiTiles = computed(() => {
 })
 
 function onTileClick(t) {
-  // 点击方块联动筛选（仅对设备状态类有效）
-  if (t.key === 'down') filterStatus.value = 'DOWN'
-  else if (t.key === 'pm' || t.key === 'pm_ot') filterStatus.value = 'PM'
-  else if (t.key === 'running') filterStatus.value = 'RUN'
+  // 设备状态类 tile：联动筛选设备表
+  if (t.key === 'down') { filterStatus.value = 'DOWN'; return }
+  if (t.key === 'pm' || t.key === 'pm_ot') { filterStatus.value = 'PM'; return }
+  if (t.key === 'running') { filterStatus.value = 'RUN'; return }
+  // 其余 tile：跳转到对应模块页面
+  const routeMap = {
+    open_wo: '/work-orders',
+    my_open_wo: '/work-orders',
+    sla: '/work-orders',
+    low_stock: '/spare-parts',
+    safety: '/safety-inspection',
+    lub: '/lubrication',
+    docs_pend: '/process-documents',
+    docs_review: '/process-documents',
+    knowledge: '/knowledge-base',
+    cost: '/equipment-cost',
+    oee: '/oee',
+    quality: '/quality',
+  }
+  const route = routeMap[t.key]
+  if (route) router.push(route)
 }
 
 function isPast(dateStr) {

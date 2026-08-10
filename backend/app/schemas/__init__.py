@@ -62,11 +62,21 @@ class UserUpdate(BaseModel):
 
 
 class UserOut(UserBase):
+    """完整用户信息（仅 /auth/me 自身接口返回）。"""
     id: int
     must_change_password: bool = False
     locked_until: Optional[datetime] = None
     failed_login_count: int = 0
     last_password_changed_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UserSummaryOut(UserBase):
+    """用户摘要（列表/管理接口返回，不含安全敏感字段）。"""
+    id: int
     created_at: datetime
 
     class Config:
@@ -1567,6 +1577,7 @@ class KnowledgeEntryBase(BaseModel):
     solution: Optional[str] = None
     prevention: Optional[str] = None
     source_work_order_id: Optional[int] = None
+    source_d8_report_id: Optional[int] = None
     tags: Optional[str] = Field(None, max_length=512)
     status: str = "active"
 
@@ -1605,6 +1616,15 @@ class KnowledgeEntryOut(KnowledgeEntryBase):
 class KnowledgeFromWorkOrder(BaseModel):
     """从工单归档为知识库条目(可选覆盖字段)。"""
     title: Optional[str] = Field(None, max_length=255, description="留空则用工单标题")
+    tags: Optional[str] = Field(None, max_length=512)
+    equipment_model: Optional[str] = Field(None, max_length=128)
+    fault_category: Optional[str] = Field(None, max_length=64)
+
+
+# 从8D报告归档为知识条目
+class KnowledgeFromD8(BaseModel):
+    """从8D报告归档为知识库条目(可选覆盖字段)。"""
+    title: Optional[str] = Field(None, max_length=255, description="留空则用8D报告标题")
     tags: Optional[str] = Field(None, max_length=512)
     equipment_model: Optional[str] = Field(None, max_length=128)
     fault_category: Optional[str] = Field(None, max_length=64)

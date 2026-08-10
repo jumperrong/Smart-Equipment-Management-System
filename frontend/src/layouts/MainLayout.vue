@@ -12,14 +12,14 @@
         router
         class="side-menu"
       >
-        <template v-for="g in menuGroups" :key="g.title">
+        <template v-for="g in menuGroups" :key="g.key">
           <!-- 单项分组：直接渲染为菜单项（如总览、系统配置） -->
           <el-menu-item v-if="g.items.length === 1" :index="g.items[0].path">
             <el-icon><component :is="g.items[0].meta.icon" /></el-icon>
             <template #title>{{ g.items[0].meta.title }}</template>
           </el-menu-item>
           <!-- 多项分组：折叠子菜单 -->
-          <el-sub-menu v-else :index="g.title">
+          <el-sub-menu v-else :index="g.key">
             <template #title>
               <el-icon><component :is="g.icon" /></el-icon>
               <span>{{ g.title }}</span>
@@ -118,33 +118,51 @@ function onThemeCommand(cmd) {
 // 单项分组渲染为直接菜单项；多项分组渲染为折叠子菜单
 const MENU_GROUPS = [
   {
+    key: 'overview',
     title: '总览',
     icon: 'DataAnalysis',
     names: ['Dashboard'],
   },
   {
-    title: '设备与资源',
+    key: 'equipment',
+    title: '设备管理',
     icon: 'Tools',
-    names: ['Equipment', 'EquipmentLifecycle', 'Lubrication', 'SpareParts', 'AssetMgmt', 'Personnel'],
+    names: ['Equipment', 'EquipmentLifecycle', 'Lubrication'],
   },
   {
-    title: '运维与安全',
+    key: 'maintenance',
+    title: '运维工单',
     icon: 'Tickets',
-    names: ['Inspection', 'WorkOrders', 'PMPlans', 'SafetyInspection', 'EnvironmentLogs'],
+    names: ['WorkOrders', 'PMPlans', 'Inspection'],
     defaultOpen: true,
   },
   {
+    key: 'safety',
+    title: '安全与环境',
+    icon: 'Warning',
+    names: ['SafetyInspection', 'EnvironmentLogs'],
+  },
+  {
+    key: 'spare',
+    title: '备件与人员',
+    icon: 'Box',
+    names: ['SpareParts', 'AssetMgmt', 'Personnel'],
+  },
+  {
+    key: 'process',
     title: '工艺文控',
     icon: 'Document',
     names: ['ProcessDocuments', 'FormTemplates', 'DocNoRules'],
     defaultOpen: true,
   },
   {
+    key: 'analysis',
     title: '分析改进',
     icon: 'TrendCharts',
     names: ['OEE', 'Quality', 'KnowledgeBase', 'EquipmentCost'],
   },
   {
+    key: 'system',
     title: '系统配置',
     icon: 'Setting',
     names: ['SystemConfig'],
@@ -169,16 +187,16 @@ const menuGroups = computed(() => {
         const c = byName[n]
         return { path: '/' + c.path, meta: c.meta, name: c.name }
       })
-    return { title: g.title, icon: g.icon, items, defaultOpen: g.defaultOpen }
+    return { key: g.key, title: g.title, icon: g.icon, items, defaultOpen: g.defaultOpen, alwaysLast: !!g.alwaysLast }
   })
   // alwaysLast 的分组（系统配置）固定排到末尾
-  const normal = groups.filter((g) => !MENU_GROUPS.find((cfg) => cfg.title === g.title)?.alwaysLast)
-  const last = groups.filter((g) => MENU_GROUPS.find((cfg) => cfg.title === g.title)?.alwaysLast)
+  const normal = groups.filter((g) => !g.alwaysLast)
+  const last = groups.filter((g) => g.alwaysLast)
   return [...normal, ...last].filter((g) => g.items.length > 0)
 })
 
 const defaultOpeneds = computed(() => {
-  return menuGroups.value.filter((g) => g.defaultOpen).map((g) => g.title)
+  return menuGroups.value.filter((g) => g.defaultOpen).map((g) => g.key)
 })
 
 const currentTitle = computed(() => route.meta.title || '')

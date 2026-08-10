@@ -43,7 +43,7 @@ from app.models import (
     RepairReport, FiveWhy, ProcessDocument, FormTemplate, FormRecord,
     FormRecordValue, FormRecordAmendment, SafetyInspection,
     EquipmentLifecycle, LubricationPoint, LubricationRecord,
-    KnowledgeEntry, EquipmentCost,
+    KnowledgeEntry, EquipmentCost, D8Report, D8Status,
 )
 from app.services.user_service import get_password_hash
 
@@ -994,6 +994,115 @@ def _seed_lubrication_records(db, points, users):
 
 
 # =====================================================================
+#  20b. 8D 报告（4 条，含 CLOSED 可归档到知识库）
+# =====================================================================
+
+def _seed_d8_reports(db, eqs, work_orders, users):
+    print(">>> 创建8D报告...")
+    eng = users["engineer1"]
+    qa = users["qa1"]
+
+    repair_wos = [w for w in work_orders if w.type == WorkOrderType.REPAIR]
+    data = [
+        {
+            "report_no": "8D-2025-001",
+            "equipment": eqs[0],
+            "work_order": repair_wos[0] if repair_wos else None,
+            "title": "PVD-01 腔体真空异常泄漏",
+            "problem": "PVD-01 在生产过程中腔体真空度突然下降至 5E-3 Torr，导致薄膜沉积均匀性超标，批次产品报废。",
+            "d1_team": "张工(工程师)、王操作(操作员)、陈品管(QA)、周工艺(工艺)",
+            "d2_problem_desc": "真空度在 30 分钟内从 5E-6 Torr 恶化至 5E-3 Torr，超出工艺规格 1E-5 Torr 上限。",
+            "d3_interim": "立即停机，切换至备用腔体生产，隔离受影响批次产品。",
+            "d4_root_cause": "O-ring 密封圈因长期高温老化失去弹性，导致腔体密封失效。",
+            "d5_permanent": "更换全系列 O-ring 密封件，建立 6 个月预防性更换周期。",
+            "d6_implement": "更换后真空度恢复至 3E-6 Torr，连续 72 小时生产稳定，产品合格率 99.5%。",
+            "d7_prevent": "在 PM 计划中增加 O-ring 弹性测试项，建立真空度趋势监控报警。",
+            "d8_recognition": "感谢团队快速响应，24 小时内恢复生产。",
+            "status": D8Status.CLOSED,
+            "owner": eng,
+        },
+        {
+            "report_no": "8D-2025-002",
+            "equipment": eqs[2] if len(eqs) > 2 else eqs[0],
+            "work_order": repair_wos[1] if len(repair_wos) > 1 else None,
+            "title": "刻蚀机温控系统漂移导致刻蚀速率偏移",
+            "problem": "ETCH-02 温控传感器读数漂移 ±2°C，刻蚀速率偏差 > 8%，超出规格 ±3%。",
+            "d1_team": "张工(工程师)、李工(设备)、陈品管(QA)",
+            "d2_problem_desc": "温控系统 RTD 传感器在 60-80°C 区间线性度下降，读数比实际值偏高 1.5-2°C。",
+            "d3_interim": "临时修正温度偏移值 +5°C，加大抽检频率至每 2 小时一次。",
+            "d4_root_cause": "RTD 传感器引线连接器氧化，导致接触电阻增大，形成温度补偿误差。",
+            "d5_permanent": "更换 RTD 传感器及镀金连接器，增加引线防护套管。",
+            "d6_implement": "更换后温控精度恢复 ±0.3°C，刻蚀速率偏差 < 1.5%，连续运行验证通过。",
+            "d7_prevent": "PM 计划增加连接器接触电阻检测项，每季度清洁一次。",
+            "d8_recognition": "团队通过数据趋势分析提前发现问题，避免了批量报废。",
+            "status": D8Status.CLOSED,
+            "owner": eng,
+        },
+        {
+            "report_no": "8D-2025-003",
+            "equipment": eqs[4] if len(eqs) > 4 else eqs[0],
+            "work_order": repair_wos[2] if len(repair_wos) > 2 else None,
+            "title": "清洗机喷淋压力不足导致清洗不净",
+            "problem": "WET-01 喷淋压力从 3.5 bar 下降至 1.8 bar，晶圆表面颗粒残留超标。",
+            "d1_team": "王操作(操作员)、张工(工程师)、周工艺(工艺)",
+            "d2_problem_desc": "喷淋压力持续下降，清洗后表面颗粒 > 50 颗（规格 < 10 颗）。",
+            "d3_interim": "增加一道手工清洗工序作为临时围堵。",
+            "d4_root_cause": "喷淋管路过滤器堵塞，杂质积累导致流量受限。",
+            "d5_permanent": "更换 5μm 过滤芯，建立 2 周更换周期。",
+            "d6_implement": "更换后压力恢复 3.5 bar，表面颗粒 < 5 颗，验证通过。",
+            "d7_prevent": "在点检表增加喷淋压力趋势记录，设置 2.8 bar 预警阈值。",
+            "d8_recognition": "感谢操作员及时发现并上报异常。",
+            "status": D8Status.CLOSED,
+            "owner": qa,
+        },
+        {
+            "report_no": "8D-2025-004",
+            "equipment": eqs[1] if len(eqs) > 1 else eqs[0],
+            "work_order": None,
+            "title": "光刻机对准精度漂移调查（进行中）",
+            "problem": "LITH-01 对准精度近期呈现缓慢漂移趋势，尚未超出规格但需关注。",
+            "d1_team": "张工(工程师)、周工艺(工艺)",
+            "d2_problem_desc": "对准精度在 30 天内从 ±0.1μm 漂移至 ±0.15μm（规格 ±0.2μm）。",
+            "d3_interim": "增加每日对准校准频次，监控趋势。",
+            "d4_root_cause": None,
+            "d5_permanent": None,
+            "d6_implement": None,
+            "d7_prevent": None,
+            "d8_recognition": None,
+            "status": D8Status.IN_PROGRESS,
+            "owner": eng,
+        },
+    ]
+
+    reports = []
+    for d in data:
+        rpt = D8Report(
+            report_no=d["report_no"],
+            equipment_id=d["equipment"].id,
+            work_order_id=d["work_order"].id if d["work_order"] else None,
+            title=d["title"],
+            problem=d["problem"],
+            d1_team=d["d1_team"],
+            d2_problem_desc=d["d2_problem_desc"],
+            d3_interim=d["d3_interim"],
+            d4_root_cause=d["d4_root_cause"],
+            d5_permanent=d["d5_permanent"],
+            d6_implement=d["d6_implement"],
+            d7_prevent=d["d7_prevent"],
+            d8_recognition=d["d8_recognition"],
+            status=d["status"],
+            owner_id=d["owner"].id,
+            closed_at=NOW if d["status"] == D8Status.CLOSED else None,
+        )
+        db.add(rpt)
+        reports.append(rpt)
+
+    db.flush()
+    print(f"    ✅ 创建 {len(reports)} 份8D报告（{sum(1 for r in reports if r.status == D8Status.CLOSED)} 条已关闭）")
+    return reports
+
+
+# =====================================================================
 #  21. 故障知识库（7 条，2 条复发 > 0）
 # =====================================================================
 
@@ -1128,6 +1237,7 @@ def _print_summary(db):
     from app.models import (
         EquipmentStatusLog, EquipmentAttachment, SparePartMovement,
         InspectionItem, InspectionResult, FiveWhy, FormRecordValue,
+        D8Report,
     )
     stats = [
         ("用户 User",                   db.query(User).count()),
@@ -1144,6 +1254,7 @@ def _print_summary(db):
         ("点检逐项结果",                 db.query(InspectionResult).count()),
         ("工单 WorkOrder",               db.query(WorkOrder).count()),
         ("报修单 RepairReport",          db.query(RepairReport).count()),
+        ("8D报告 D8Report",              db.query(D8Report).count()),
         ("FiveWhy 分析",                 db.query(FiveWhy).count()),
         ("工艺文件 ProcessDocument",     db.query(ProcessDocument).count()),
         ("表单模板 FormTemplate",        db.query(FormTemplate).count()),
@@ -1194,6 +1305,7 @@ def main():
         work_orders = _seed_work_orders(db, eqs, users)
         _seed_repair_reports_and_five_whys(db, eqs, users, work_orders)
         _seed_spare_part_usages(db, parts, work_orders, users)
+        d8_reports = _seed_d8_reports(db, eqs, work_orders, users)
 
         # 工艺文控
         form_tpls = _seed_form_templates(db, eqs, users)

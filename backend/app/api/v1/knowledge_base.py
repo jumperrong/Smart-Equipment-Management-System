@@ -5,10 +5,10 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models import KnowledgeEntry, WorkOrder, Equipment
+from app.models import KnowledgeEntry, WorkOrder, D8Report, Equipment
 from app.schemas import (
     KnowledgeEntryCreate, KnowledgeEntryOut, KnowledgeEntryUpdate,
-    KnowledgeFromWorkOrder,
+    KnowledgeFromWorkOrder, KnowledgeFromD8,
 )
 from app.services.user_service import get_current_user
 
@@ -98,6 +98,54 @@ def from_work_order(
         prevention=wo.prevention,
         source_work_order_id=wo.id,
         tags=payload.tags,
+        status="active",
+        created_by_id=current_user.id,
+        created_by_name=_user_display_name(current_user),
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.post("/from-d8/{d8_id}", response_model=KnowledgeEntryOut)
+def from_d8_report(
+    d8_id: int,
+    payload: Optional[KnowledgeFromD8] = None,
+    db: Session = Depends(get_db), current_user=Depends(get_current_user),
+):
+    """从8D报告归档为知识库条目：自动提取 D2(问题)/D4(根因)/D5(纠正)/D7(预防) 填充。"""
+    rpt = db.query(D8Report).filter(D8Report.id == d8_id).first()
+    if not rpt:
+        raise HTTPException(status_code=404, detail="8D报告不存在")
+
+    payload = payload or KnowledgeFromD8()
+
+    # 故障分类：8D报告本身没有故障分类字段，留空或用 payload 覆盖
+    fc = payload.fault_category
+
+    title = payload.title or rpt.title
+
+    # 组装故障现象：D0 问题描述 + D2 问题定义
+    symptom_parts = []
+    if rpt.problem:
+        symptom_parts.append(f"D0 问题描述: {rpt.problem}")
+    if rpt.d2_problem_desc:
+        symptom_parts.append(f"D2 问题定义: {rpt.d2_problem_desc}")
+    symptom = "\n".join(symptom_parts) if symptom_parts else None
+
+    obj = KnowledgeEntry(
+        title=title,
+        symptom=symptom,
+        fault_category=fc,
+        equipment_id=rpt.equipment_id,
+        equipment_model=payload.equipment_model,
+        root_cause=rpt.d4_root_cause,
+        solution=rpt.d5_permanent,
+        prevention=rpt.d7_prevent,
+        source_d8_report_id=rpt.id,
+        source_work_order_id=rpt.work_order_id,
+        tags=payload.tags or f"8D,{rpt.report_no}",
         status="active",
         created_by_id=current_user.id,
         created_by_name=_user_display_name(current_user),

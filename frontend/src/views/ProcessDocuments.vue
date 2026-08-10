@@ -1036,8 +1036,16 @@
         <el-table-column label="字段" width="130">
           <template #default="{ row }">{{ row.field_label || row.field_key }}</template>
         </el-table-column>
-        <el-table-column label="原值">{{ row.original_value || '-' }}</el-table-column>
-        <el-table-column label="修正值">{{ row.corrected_value || '-' }}</el-table-column>
+        <el-table-column label="原值" min-width="120">
+          <template #default="{ row }">
+            <span style="color:#909399">{{ row.original_value == null ? '-' : formatScalar(row.original_value) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="修正值" min-width="120">
+          <template #default="{ row }">
+            <span style="color:var(--el-color-success)">{{ row.corrected_value == null ? '-' : formatScalar(row.corrected_value) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="70">
           <template #default="{ row }">
             <el-tag size="small" :type="row.status === 'APPROVED' ? 'success' : row.status === 'REJECTED' ? 'danger' : 'warning'">
@@ -1092,8 +1100,8 @@ import {
   listAmendments,
   createAmendment,
   approveAmendment,
+  listFormTemplates,
 } from '@/api/form_template'
-import { listFormTemplates } from '@/api/form_template'
 import { useUserStore } from '@/stores'
 import { formatTime } from '@/utils'
 
@@ -1305,9 +1313,11 @@ const editRules = {
 }
 
 function openEditDialog(row) {
+  const validCategories = ['guide', 'record']
+  const category = validCategories.includes(row.category) ? row.category : 'guide'
   Object.assign(editForm, {
     id: row.id,
-    category: row.category || 'guide',
+    category,
     doc_name: row.doc_name || '',
     doc_type: row.doc_type || '',
     version: row.version || '',
@@ -1737,14 +1747,6 @@ async function openApprovalDialog(row, stage) {
     approvalList.value = await listApprovals(row.id)
   } catch (e) { /* 静默 */ }
 }
-
-const approvalStageOptions = [
-  { value: 'prepare', label: '通过（提交审核）' },
-  { value: 'review', label: '通过（审核通过）' },
-  { value: 'approve', label: '通过（批准生效）' },
-  { value: 'reject_prepare', label: '驳回（退回草稿）' },
-  { value: 'reject_review', label: '驳回（审核退回）' },
-]
 
 async function onConfirmApproval(reject = false) {
   try {

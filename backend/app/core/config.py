@@ -1,6 +1,19 @@
 from pydantic_settings import BaseSettings
 from typing import List, Optional
 import secrets
+import os
+
+
+def _backend_root_dir() -> str:
+    """返回 backend/ 项目根目录的绝对路径（不受进程启动 CWD 影响）。"""
+    # __file__ = backend/app/core/config.py → 上三级 = backend/
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(os.path.join(here, os.pardir, os.pardir, os.pardir))
+
+
+BACKEND_ROOT: str = _backend_root_dir()
+DATA_DIR: str = os.path.join(BACKEND_ROOT, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
 
 
 class Settings(BaseSettings):
@@ -17,7 +30,13 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173", "http://127.0.0.1:8080",
     ]
 
-    SQLALCHEMY_DATABASE_URI: str = "sqlite:///./data/app.db"
+    # 绝对路径，避免 CWD 不同导致找不到/新建空数据库
+    SQLALCHEMY_DATABASE_URI: str = f"sqlite:///{os.path.join(DATA_DIR, 'app.db')}"
+
+    @property
+    def DATA_DIR(self) -> str:
+        """公开数据目录，供备份/附件逻辑使用。"""
+        return globals()["DATA_DIR"]
 
     # 服务运行参数（由系统设置界面维护，写入 .env 文件后由 pydantic-settings 自动加载）
     PORT: int = 8000

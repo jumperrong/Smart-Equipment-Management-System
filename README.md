@@ -8,6 +8,11 @@ Semiconductor Equipment Management System
 
 ## 版本 Highlights（最近一次主要更新）
 
+- **📚 8D 报告一键归档知识库**：故障知识库支持从 **8D 报告**（D0 问题描述 + D2 问题定义 → 故障现象 / D4 → 根因 / D5 → 处置措施 / D7 → 预防措施）自动提取填充，关联 `source_d8_report_id` 溯源，同时保留原有「工单归档」入口，双路径沉淀经验。
+- **📋 分级菜单（8 大分组）**：从一级平铺改为「设备管理 / 日常运维 / 工艺文控 / 品管工具 / 合规安全 / 数据价值 / 系统管理」8 组折叠式导航，**系统配置永远放在最末一组**，菜单层级一目了然。
+- **🎯 角色定制看板**：不同角色（管理员/工程师/工艺/QA/操作员/查看者）登录后自动显示不同的看板卡片组合与排序优先级，例如 QA 优先看文控复审告警 + 8D 报告进度、操作员优先看设备状态 + 到期点检。
+- **🧾 敏感操作审计日志入库**：`LOGIN_OK / LOGIN_FAIL / LOGIN_LOCKED / LOGOUT / PASSWORD_CHANGED / PASSWORD_RESET / USER_CREATE / USER_UPDATE / USER_DELETE / USER_UNLOCK` 等所有敏感操作从 stdout 改为持久化写入 `audit_logs` 表（含操作人 / 目标用户 / IP / User-Agent / 时间戳 / 详情），满足体系审核留痕要求。
+- **🔐 密码 bcrypt 72 字节截断修复**：引入 SHA-256 预哈希 + bcrypt 二次哈希（旧算法透明回退 + 登录成功时自动升级重哈希），解决超长密码被静默截断导致熵损失的安全隐患。
 - **🎨 B+C 双皮肤主题（一明一暗）可跟随系统**：引入"极简青绿（明色 B 方案）"+"暗色霓虹（暗色 C 方案）"两套配色；顶栏按钮一键切换明色 / 暗色 / 跟随系统（`prefers-color-scheme`），偏好写入 localStorage，刷新仍生效。
 - **🌗 暗模式亮度统一补丁**：针对 Element Plus 组件（el-tag 实心/空心/浅色、el-button 实心、el-avatar、el-dropdown-menu、el-message、el-empty 等）在暗底上反白刺眼的问题做了增量修复，背景亮度统一压到 0.35 以下、文字对比度保持可读性，不再出现"白底淡蓝字"观感。
 - **表单模板与结构化记录**：管理员定义模板（字段类型/必填/选项/单位/范围），操作员选模板动态生成电子表单并填写，数据结构化存储可导出 JSON/CSV，替代传统 PDF 上传模式。
@@ -40,7 +45,7 @@ Semiconductor Equipment Management System
 | 工艺文件 | 指导性文件版本管理 + **作业记录结构化表单（模板定义→动态填写→归档→导出 JSON/CSV）** + **文控审批链 / 修订 / 分发 / 水印 / 复审** |
 | **文控系统** | **三级电子签名审批链（编制→审核→批准）、状态机白名单、文档编号规则、修订记录、分发收回、PDF 水印受控章、表单审核锁定 + 附加修正、复审告警、QA 角色权限** |
 | OEE 分析 | 设备综合效率统计 |
-| 品管工具 | 8D / FMEA |
+| 品管工具 | 8D / FMEA，**8D 报告可一键归档故障知识库**（D0+D2→现象 / D4→根因 / D5→处置 / D7→预防） |
 | 环境核查 | 环境参数日志 |
 | 人员管理 | 资质、培训、技能矩阵 |
 | 资产管理 | 资产盘点、调拨报废 |
@@ -405,7 +410,7 @@ SEMS 运行在工厂内网时，依然有「临时接入电脑 / 运维共享账
 | 能力 | 说明 | 默认状态 |
 |------|------|----------|
 | 访问+刷新令牌双 JWT | `access_token` 2 小时 + `refresh_token` 7 天，前端到期前 5 分钟自动续期；降低长期有效密钥被窃取风险 | 启用 |
-| 密码慢哈希 | bcrypt (rounds=12)，抗 GPU 暴力破解 | 启用 |
+| 密码慢哈希（修复 72 字节截断） | bcrypt (rounds=12) 前先做 **SHA-256 预哈希** → 固定 32 字节摘要喂给 bcrypt，规避原生 bcrypt 对超长密码静默截断前 72 字节的熵损失漏洞；旧哈希值透明回退验证，且登录成功时**自动升级**为新算法 | 启用 |
 | 密码复杂度 | 最小 8 位 + 大写/小写/数字/特殊符号 ≥3 类 + 内置弱密码字典 16 条拦截 | 启用 |
 | 登录失败锁定 | 连续失败 5 次 → 账户锁定 15 分钟（阈值可配置） | 启用 |
 | 用户名枚举防护 | 即使账号不存在也走一次 bcrypt 验证耗时，避免攻击者用耗时判断账号是否存在 | 启用 |
@@ -432,11 +437,23 @@ SEMS 运行在工厂内网时，依然有「临时接入电脑 / 运维共享账
 - **路由守卫**：`must_change_password=True` 的用户除 `/change-password`、`/login` 外，所有受保护页面都会被拦截，避免绕过。
 - `api/request.js` 中对 401 做了请求级防抖，避免同时发 N 个刷新请求。
 
-### 4) 敏感操作审计日志
+### 4) 敏感操作审计日志（入库持久化）
 
-所有敏感操作通过 `logger.warning("[SEC-AUDIT] ...")` 输出到后端 stdout（可再接入 logrotate / syslog / 文件日志采集器），包含：**操作类型、用户名、客户端 IP、User-Agent、时间戳**。当前覆盖的动作：
+所有敏感操作持久化写入 `audit_logs` 表（`AuditLog` 模型，可按 `action / actor / target / ip / created_at` 条件查询，满足体系审核留痕要求），同时也会 `logger.warning` 输出到 stdout，便于实时监控。每条日志包含：
 
-`LOGIN_OK` / `LOGIN_FAIL` / `LOGIN_LOCKED` / `PASSWORD_CHANGED_OK` / `PASSWORD_RESET` / `USER_CREATE` / `USER_UPDATE` / `USER_DELETE` / `USER_UNLOCK` / `LOGOUT` / `RESTORE_BACKUP`。
+- `action`：操作类型
+- `actor`：操作者用户名
+- `target`：被操作对象用户名（如被改密/被删除的用户）
+- `ip`：客户端 IP
+- `user_agent`：浏览器 User-Agent
+- `detail`：补充信息（如旧密码/新密码哈希标记、失败原因）
+- `created_at`：时间戳（UTC）
+
+当前覆盖的动作：
+
+`LOGIN_OK` / `LOGIN_FAIL` / `LOGIN_LOCKED` / `LOGOUT` / `PASSWORD_CHANGED` / `PASSWORD_RESET` / `USER_CREATE` / `USER_UPDATE` / `USER_DELETE` / `USER_UNLOCK` / `RESTORE_BACKUP`。
+
+相关代码：[audit_service.py](file:///workspace/backend/app/services/audit_service.py) · [models/__init__.py](file:///workspace/backend/app/models/__init__.py)（`AuditLog`）· [auth.py](file:///workspace/backend/app/api/v1/auth.py)
 
 ### 5) 管理员快速自检清单（上线前必做）
 
@@ -1025,28 +1042,32 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 
 ### 📚 故障知识库（P6 数据价值侧 · 精益化阶段）
 
-将历史故障工单沉淀为可检索的故障知识，支持相似案例推荐与复发次数追踪。
+将历史故障工单 + 8D 报告沉淀为可检索的故障知识，支持双路径归档、相似案例推荐、复发次数追踪。
 
 #### 数据模型
 
 - `KnowledgeEntry`：知识条目
   - `title` / `fault_category` / `symptom`（故障现象）
   - `root_cause`（根因）/ `solution`（处置）/ `prevention`（预防）
-  - `equipment_id` / `work_order_id`：来源工单（可空）
-  - `tags`（标签，CSV）/ `keywords`（关键词，CSV）
-  - `recurrence_count`：复发次数（用于追踪是否同一根因复发）
-  - `view_count`：浏览次数
+  - `equipment_id`：关联设备（可空，表示通用知识）
+  - `equipment_model`：设备型号（跨设备复用检索）
+  - `source_work_order_id`：来源工单 ID（可空）
+  - `source_d8_report_id`：来源 8D 报告 ID（可空）
+  - `tags`（标签，CSV）
+  - `views`：浏览次数（GET 详情时自动 +1）
+  - `recurrence_count`：复发次数
+  - `status`：`active` / `archived`
 
 #### 功能
 
 | 操作 | 路径 | 说明 |
 |------|------|------|
-| 知识列表 | `GET /api/v1/knowledge` | 支持按设备/分类/关键词全文检索 |
-| 从工单归档 | `POST /api/v1/knowledge/from-workorder/{wo_id}` | 把工单的故障分析/根因/处置/预防自动填充为知识条目 |
+| 知识列表 | `GET /api/v1/knowledge` | 支持按设备/分类/关键词全文检索（title / symptom / root_cause / solution） |
+| 从工单归档 | `POST /api/v1/knowledge/from-work-order/{wo_id}` | 把工单的描述/根因/处置/预防 + fault_category 自动填充为知识条目；payload 可覆盖 title / tags / equipment_model / fault_category |
+| **从 8D 报告归档** | **`POST /api/v1/knowledge/from-d8/{d8_id}`** | 自动提取 D0（problem）+ D2（problem_desc）→ symptom / D4 → root_cause / D5 → solution / D7 → prevention；默认标签 `8D,{报告编号}`；payload 可覆盖 title / tags / equipment_model / fault_category |
 | 知识 CRUD | `POST/PUT/DELETE /api/v1/knowledge[/{id}]` | 手动维护知识 |
-| 相似案例 | `GET /api/v1/knowledge/{id}/similar` | 基于设备 + 故障分类 + 关键词推荐相似案例 |
-| 增加复发 | `POST /api/v1/knowledge/{id}/recurrence` | 标记同根因复发，`recurrence_count + 1` |
-| 增加浏览 | `POST /api/v1/knowledge/{id}/view` | `view_count + 1`，用于热度排序 |
+| 相似案例 | `GET /api/v1/knowledge/similar` | 按 `equipment_id` + `fault_category` 双维匹配推荐（同设备同分类优先，退化同设备或同分类） |
+| 标记复发 | `POST /api/v1/knowledge/{id}/recurrence` | `recurrence_count + 1`，追踪同根因复发 |
 
 ---
 

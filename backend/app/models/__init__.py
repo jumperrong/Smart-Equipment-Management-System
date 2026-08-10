@@ -1205,6 +1205,7 @@ class KnowledgeEntry(Base):
     solution = Column(Text, nullable=True, comment="处置措施")
     prevention = Column(Text, nullable=True, comment="预防措施")
     source_work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True, comment="来源工单ID")
+    source_d8_report_id = Column(Integer, ForeignKey("d8_reports.id"), nullable=True, comment="来源8D报告ID")
     tags = Column(String(512), nullable=True, comment="标签(逗号分隔)")
     views = Column(Integer, default=0, nullable=False, comment="浏览次数")
     recurrence_count = Column(Integer, default=0, nullable=False, comment="复发次数")
@@ -1214,6 +1215,22 @@ class KnowledgeEntry(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     equipment = relationship("Equipment")
+
+
+# ============ 审计日志 ============
+
+class AuditLog(Base):
+    """安全审计日志（登录/改密/用户管理等敏感操作）。"""
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    action = Column(String(64), nullable=False, index=True, comment="LOGIN_OK/LOGIN_FAIL/LOGIN_LOCKED/LOGOUT/PASSWORD_CHANGED/PASSWORD_RESET/USER_CREATE/USER_UPDATE/USER_DELETE/USER_UNLOCK")
+    actor = Column(String(64), nullable=True, index=True, comment="操作者用户名")
+    target = Column(String(64), nullable=True, comment="被操作对象用户名")
+    ip = Column(String(64), nullable=True)
+    user_agent = Column(String(512), nullable=True)
+    detail = Column(String(500), nullable=True, comment="补充信息")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
 # ============ 模块6: P7 设备成本 LCC ============
