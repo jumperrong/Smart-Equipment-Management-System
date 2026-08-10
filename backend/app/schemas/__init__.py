@@ -984,6 +984,28 @@ class DashboardSummary(BaseModel):
     today_good: int = 0
     today_defect: int = 0
     oee: float = 0.0
+    # 角色相关 KPI（按 role 填充，无关角色为 0/空）
+    role: Optional[str] = None
+    # 文控相关（admin / qa / process_engineer 关心）
+    docs_pending_review: int = 0       # 待审核文档数（status=审核中）
+    docs_pending_approve: int = 0      # 待批准文档数（status=审核通过待批准，若无此状态可=0）
+    docs_review_overdue: int = 0       # 复审到期/已过期文档数
+    my_draft_docs: int = 0             # 我的草稿文档数
+    form_records_pending_audit: int = 0  # 表单待审核数
+    amendments_pending: int = 0         # 附加修正待审批数
+    # 工单相关（admin / engineer / operator 关心）
+    my_open_work_orders: int = 0       # 我处理中的工单数
+    sla_breached_count: int = 0         # SLA 违约工单数
+    my_inspection_pending: int = 0      # 我未完成点检（演示：今日未提交点检设备数）
+    # 备件 / 资源（admin / engineer 关心）
+    low_stock_parts: int = 0            # 低于安全库存的备件数
+    # 合规安全（admin / engineer / qa 关心）
+    safety_check_due: int = 0           # 安全检查即将到期/已逾期项数
+    safety_certificate_expiring: int = 0  # 特种设备证书到期数
+    lubrication_due: int = 0             # 润滑到期数
+    # 工艺相关（process_engineer 关心）
+    process_validation_count: int = 0    # 工艺验证中设备数（含 ENGINEERING + PROCESS_VALIDATION）
+    my_process_work_orders: int = 0      # 我提交的工单数（演示：当前用户创建的工单）
 
 
 class DashboardOut(BaseModel):
@@ -993,6 +1015,16 @@ class DashboardOut(BaseModel):
     recent_status_logs: List[DashboardStatusLogItem]
     recent_work_orders: List[DashboardWorkOrderItem]
     recent_production: List[DashboardProductionItem]
+    # 角色相关附加数据
+    role_widgets: List[str] = []        # 该角色应渲染的 widget key 列表
+    pending_review_docs: List[dict] = []      # 待审核文档清单（QA / admin）
+    review_overdue_docs: List[dict] = []      # 复审到期文档清单
+    my_open_work_orders_list: List[dict] = []  # 我处理中的工单清单
+    top_recurrence_knowledge: List[dict] = []  # 故障复发 TOP（engineer）
+    low_stock_parts_list: List[dict] = []      # 低库存备件清单
+    safety_alerts_list: List[dict] = []        # 安全检查告警清单
+    lubrication_due_list: List[dict] = []     # 润滑到期清单
+
 
 
 # ============ 模块 J: 系统字典/配置 ============

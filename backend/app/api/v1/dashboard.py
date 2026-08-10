@@ -21,8 +21,8 @@ router = APIRouter(tags=["看板/产品/生产"])
 # ---------- Dashboard ----------
 
 @router.get("/dashboard", response_model=DashboardOut)
-def dashboard(log_limit: int = 50, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    return dashboard_service.get_dashboard(db, log_limit=log_limit)
+def dashboard(log_limit: int = 50, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return dashboard_service.get_dashboard(db, log_limit=log_limit, current_user=current_user)
 
 
 # ---------- Products ----------

@@ -355,7 +355,7 @@ def seed_demo_statuses(db: Session):
     db.commit()
 
 
-def get_dashboard(db: Session, log_limit: int = 10) -> DashboardOut:
+def get_dashboard(db: Session, log_limit: int = 10, current_user=None) -> DashboardOut:
     now = datetime.utcnow()
     today_start = datetime(now.year, now.month, now.day)
 
@@ -636,6 +636,249 @@ def get_dashboard(db: Session, log_limit: int = 10) -> DashboardOut:
         oee=oee,
     )
 
+    # ============================================================
+    # 角色相关数据填充：按 current_user.role 决定填充哪些字段
+    # ============================================================
+    from app.models import (
+        ProcessDocument, FormRecord, FormRecordAmendment,
+        SafetyInspection, LubricationPoint, KnowledgeEntry,
+    )
+    # role 可能是 UserRole 枚举或字符串，统一取出字符串值
+    if current_user and hasattr(current_user.role, 'value'):
+        role = current_user.role.value
+    elif current_user and current_user.role:
+        role = str(current_user.role)
+    else:
+        role = None
+    user_id = current_user.id if current_user else None
+    summary.role = role
+
+    # 角色对应的 widget 列表（前端按 key 渲染对应区块）
+    ROLE_WIDGETS = {
+        "admin": [
+            "kpi_admin", "equipment_status", "recent_work_orders",
+            "review_overdue_docs", "low_stock_parts", "safety_alerts",
+        ],
+        "engineer": [
+            "kpi_engineer", "equipment_status", "my_open_work_orders",
+            "top_recurrence", "low_stock_parts", "safety_alerts", "lubrication_due",
+        ],
+        "process_engineer": [
+            "kpi_process", "process_validation_equipment",
+            "review_overdue_docs", "pending_review_docs",
+        ],
+        "qa": [
+            "kpi_qa", "pending_review_docs", "review_overdue_docs",
+            "safety_alerts",
+        ],
+        "operator": [
+            "kpi_operator", "equipment_status", "my_open_work_orders",
+        ],
+        "viewer": [
+            "kpi_viewer", "equipment_status",
+        ],
+    }
+    role_widgets = ROLE_WIDGETS.get(role, ["kpi_viewer", "equipment_status"])
+
+    pending_review_docs = []
+    review_overdue_docs = []
+    my_open_work_orders_list = []
+    top_recurrence_knowledge = []
+    low_stock_parts_list = []
+    safety_alerts_list = []
+    lubrication_due_list = []
+
+    # ---- 文控相关：admin / qa / process_engineer ----
+    if role in ("admin", "qa", "process_engineer"):
+        # 待审核文档清单（status=审核中，按更新时间倒序，最多 10 条）
+        pend_q = (
+            db.query(ProcessDocument)
+            .filter(ProcessDocument.status == "审核中")
+            .order_by(ProcessDocument.updated_at.desc())
+            .limit(10)
+            .all()
+        )
+        pending_review_docs = [
+            {"id": d.id, "doc_no": d.doc_no, "doc_name": d.doc_name,
+             "version": d.version, "status": d.status, "updated_at": d.updated_at.isoformat() if d.updated_at else None}
+            for d in pend_q
+        ]
+        summary.docs_pending_review = len(pend_q)
+        # 待批准数（如有"待批准"状态）
+        summary.docs_pending_approve = (
+            db.query(ProcessDocument)
+            .filter(ProcessDocument.status == "待批准")
+            .count()
+        )
+        # 复审到期/已过期文档（next_review_date 在未来 30 天内或已过期）
+        from datetime import timedelta as _td
+        upcoming = now + _td(days=30)
+        overdue_q = (
+            db.query(ProcessDocument)
+            .filter(
+                ProcessDocument.status == "生效",
+                ProcessDocument.next_review_date.isnot(None),
+                ProcessDocument.next_review_date <= upcoming,
+            )
+            .order_by(ProcessDocument.next_review_date.asc())
+            .limit(20)
+            .all()
+        )
+        review_overdue_docs = [
+            {"id": d.id, "doc_no": d.doc_no, "doc_name": d.doc_name,
+             "version": d.version, "next_review_date": d.next_review_date.isoformat() if d.next_review_date else None,
+             "is_overdue": d.next_review_date < now if d.next_review_date else False}
+            for d in overdue_q
+        ]
+        summary.docs_review_overdue = len(overdue_q)
+
+    # QA 专属：表单待审核数 + 附加修正待审批数
+    if role == "qa":
+        summary.form_records_pending_audit = (
+            db.query(FormRecord)
+            .filter(FormRecord.status == "已提交", FormRecord.audited.is_(False) | FormRecord.audited.is_(None))
+            .count()
+        )
+        summary.amendments_pending = (
+            db.query(FormRecordAmendment)
+            .filter(FormRecordAmendment.status == "PENDING")
+            .count()
+        )
+
+    # 工艺员专属：工艺验证中设备数 + 我的草稿文档数 + 我提交的工单数
+    if role == "process_engineer":
+        summary.process_validation_count = (
+            status_counts.get(EquipmentStatus.ENGINEERING.value, 0)
+            + status_counts.get(EquipmentStatus.PROCESS_VALIDATION.value, 0)
+        )
+        if user_id:
+            summary.my_draft_docs = (
+                db.query(ProcessDocument)
+                .filter(ProcessDocument.status == "草稿", ProcessDocument.uploaded_by == user_id)
+                .count()
+            )
+            summary.my_process_work_orders = (
+                db.query(WorkOrder)
+                .filter(WorkOrder.assignee_id == user_id)
+                .count()
+            )
+
+    # ---- 工单相关：admin / engineer / operator ----
+    if role in ("admin", "engineer", "operator") and user_id:
+        my_wos = (
+            db.query(WorkOrder)
+            .filter(
+                WorkOrder.assignee_id == user_id,
+                WorkOrder.status.in_(OPEN_WO_STATUSES),
+            )
+            .order_by(WorkOrder.id.desc())
+            .limit(10)
+            .all()
+        )
+        my_open_work_orders_list = [
+            {"id": wo.id, "order_no": wo.order_no, "type": wo.type.value if wo.type else None,
+             "status": wo.status.value if wo.status else None,
+             "title": wo.title, "equipment_id": wo.equipment_id,
+             "equipment_name": eq_name_map.get(wo.equipment_id, f"#{wo.equipment_id}"),
+             "created_at": wo.created_at.isoformat() if wo.created_at else None}
+            for wo in my_wos
+        ]
+        summary.my_open_work_orders = len(my_wos)
+        # SLA 违约数（assignee 是当前用户的违约工单）
+        summary.sla_breached_count = (
+            db.query(WorkOrder)
+            .filter(
+                WorkOrder.assignee_id == user_id,
+                WorkOrder.sla_breached.is_(True),
+            )
+            .count()
+        )
+
+    # admin / engineer：全量 SLA 违约数 + 备件低库存 + 故障复发 TOP（仅 engineer）
+    if role in ("admin", "engineer"):
+        # 备件低库存清单
+        low_q = (
+            db.query(SparePart)
+            .filter(SparePart.current_stock < SparePart.safety_stock)
+            .order_by((SparePart.safety_stock - SparePart.current_stock).desc())
+            .limit(10)
+            .all()
+        )
+        low_stock_parts_list = [
+            {"id": p.id, "sku": p.sku, "name": p.name, "spec": p.spec,
+             "current_stock": p.current_stock, "safety_stock": p.safety_stock,
+             "unit": p.unit, "location": p.location}
+            for p in low_q
+        ]
+        summary.low_stock_parts = len(low_q)
+        # 安全检查告警清单
+        from datetime import timedelta as _td2
+        upcoming2 = now + _td2(days=30)
+        safe_q = (
+            db.query(SafetyInspection)
+            .filter(
+                (SafetyInspection.next_check_date.isnot(None) & (SafetyInspection.next_check_date <= upcoming2))
+                | (SafetyInspection.certificate_expiry.isnot(None) & (SafetyInspection.certificate_expiry <= upcoming2))
+            )
+            .order_by(SafetyInspection.next_check_date.asc())
+            .limit(15)
+            .all()
+        )
+        safety_alerts_list = [
+            {"id": s.id, "equipment_id": s.equipment_id, "check_name": s.check_name,
+             "check_type": s.check_type, "frequency": s.frequency,
+             "next_check_date": s.next_check_date.isoformat() if s.next_check_date else None,
+             "certificate_expiry": s.certificate_expiry.isoformat() if s.certificate_expiry else None,
+             "result": s.result}
+            for s in safe_q
+        ]
+        summary.safety_check_due = sum(1 for s in safe_q if s.next_check_date and s.next_check_date <= upcoming2)
+        summary.safety_certificate_expiring = sum(1 for s in safe_q if s.certificate_expiry and s.certificate_expiry <= upcoming2)
+
+    # engineer 专属：故障复发 TOP + 润滑到期
+    if role == "engineer":
+        top_rec_q = (
+            db.query(KnowledgeEntry)
+            .filter(KnowledgeEntry.recurrence_count > 0)
+            .order_by(KnowledgeEntry.recurrence_count.desc())
+            .limit(5)
+            .all()
+        )
+        top_recurrence_knowledge = [
+            {"id": k.id, "title": k.title, "fault_category": k.fault_category,
+             "symptom": k.symptom, "recurrence_count": k.recurrence_count,
+             "view_count": k.view_count}
+            for k in top_rec_q
+        ]
+        from datetime import timedelta as _td3
+        upcoming3 = now + _td3(days=7)
+        lub_q = (
+            db.query(LubricationPoint)
+            .filter(
+                LubricationPoint.next_lubricated_date.isnot(None),
+                LubricationPoint.next_lubricated_date <= upcoming3,
+            )
+            .order_by(LubricationPoint.next_lubricated_date.asc())
+            .limit(15)
+            .all()
+        )
+        lubrication_due_list = [
+            {"id": l.id, "equipment_id": l.equipment_id, "point_name": l.point_name,
+             "position": l.position, "oil_type": l.oil_type,
+             "next_lubricated_date": l.next_lubricated_date.isoformat() if l.next_lubricated_date else None,
+             "responsible_person": l.responsible_person}
+            for l in lub_q
+        ]
+        summary.lubrication_due = len(lub_q)
+
+    # operator 专属：今日未提交点检设备数（演示：当前所有日检模板都未提交）
+    if role == "operator":
+        summary.my_inspection_pending = (
+            db.query(InspectionTemplate)
+            .filter(InspectionTemplate.is_active.is_(True), InspectionTemplate.frequency == "DAILY")
+            .count()
+        )
+
     return DashboardOut(
         summary=summary,
         status_counts=dict(status_counts),
@@ -643,6 +886,14 @@ def get_dashboard(db: Session, log_limit: int = 10) -> DashboardOut:
         recent_status_logs=log_items,
         recent_work_orders=wo_items,
         recent_production=pr_items,
+        role_widgets=role_widgets,
+        pending_review_docs=pending_review_docs,
+        review_overdue_docs=review_overdue_docs,
+        my_open_work_orders_list=my_open_work_orders_list,
+        top_recurrence_knowledge=top_recurrence_knowledge,
+        low_stock_parts_list=low_stock_parts_list,
+        safety_alerts_list=safety_alerts_list,
+        lubrication_due_list=lubrication_due_list,
     )
 
 
