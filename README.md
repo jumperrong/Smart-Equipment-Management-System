@@ -2,6 +2,8 @@
 
 Semiconductor Equipment Management System
 
+> **版本：V2026.08**（2026-08 更新）
+
 一个面向半导体制造车间的轻量级设备管理平台，覆盖设备台账、实时状态看板、PM 维护计划、工单管理、点检巡检、备件管理、OEE 分析等功能。基于 FastAPI + Vue 3 构建，开箱即用。
 
 ---
@@ -9,7 +11,7 @@ Semiconductor Equipment Management System
 ## 版本 Highlights（最近一次主要更新）
 
 - **📚 8D 报告一键归档知识库**：故障知识库支持从 **8D 报告**（D0 问题描述 + D2 问题定义 → 故障现象 / D4 → 根因 / D5 → 处置措施 / D7 → 预防措施）自动提取填充，关联 `source_d8_report_id` 溯源，同时保留原有「工单归档」入口，双路径沉淀经验。
-- **📋 分级菜单（8 大分组）**：从一级平铺改为「设备管理 / 日常运维 / 工艺文控 / 品管工具 / 合规安全 / 数据价值 / 系统管理」8 组折叠式导航，**系统配置永远放在最末一组**，菜单层级一目了然。
+- **📋 分级菜单（8 大分组）**：从一级平铺改为「① 总览 / ② 设备管理 / ③ 运维工单 / ④ 安全与环境 / ⑤ 备件与人员 / ⑥ 工艺文控 / ⑦ 分析改进 / ⑧ 系统配置」8 组折叠式导航，**系统配置永远放在最末一组**，菜单层级一目了然。
 - **🎯 角色定制看板**：不同角色（管理员/工程师/工艺/QA/操作员/查看者）登录后自动显示不同的看板卡片组合与排序优先级，例如 QA 优先看文控复审告警 + 8D 报告进度、操作员优先看设备状态 + 到期点检。
 - **🧾 敏感操作审计日志入库**：`LOGIN_OK / LOGIN_FAIL / LOGIN_LOCKED / LOGOUT / PASSWORD_CHANGED / PASSWORD_RESET / USER_CREATE / USER_UPDATE / USER_DELETE / USER_UNLOCK` 等所有敏感操作从 stdout 改为持久化写入 `audit_logs` 表（含操作人 / 目标用户 / IP / User-Agent / 时间戳 / 详情），满足体系审核留痕要求。
 - **🔐 密码 bcrypt 72 字节截断修复**：引入 SHA-256 预哈希 + bcrypt 二次哈希（旧算法透明回退 + 登录成功时自动升级重哈希），解决超长密码被静默截断导致熵损失的安全隐患。
@@ -24,7 +26,7 @@ Semiconductor Equipment Management System
 - **低成本灾备（3-2-1）**：备份加密、NAS/SMB 异地副本、烟雾还原测试、系统级旁路 cron/任务计划备份脚本（见「灾备方案」章节）。
 - **📑 文控系统（符合体系标准）**：三级电子签名审批链（编制→审核→批准）+ SHA256 签名指纹、状态机白名单（草稿→审核中→生效→作废）、文档编号规则、修订记录（字段级 before/after）、分发收回台账、PDF 水印受控章、表单审核锁定 + 附加修正、复审周期告警、QA 角色权限矩阵（见「文控系统」章节）。
 - **🛡 安全检查模块**：安全装置定期检查（防护罩/急停/联锁）、特种设备检验日历、证书到期告警、检查执行 + 整改措施跟踪（见「安全检查」章节）。
-- **⏱ 工单 SLA / 升级**：SLA 目标响应/解决时长、实际响应/解决时长自动计算、SLA 违约标记、超时升级指派、SLA 达成率统计。
+- **⏱ 工单 SLA / 超期升级**：SLA 目标响应/解决时长、实际响应/解决时长自动计算、**超期工单**标记、超时升级指派、SLA 达成率统计。
 - **🔄 设备生命周期 T0-T3**：选型(T0)→采购(T1)→安装调试(T2,FAT/SAT)→量产移交(T3)全流程，含采购金额/验收结果/时间线展示。
 - **🛢 润滑管理（五定）**：润滑点定义（定点/定人/定时/定质/定量）、润滑计划 + 到期告警、润滑执行记录、频次自动推算下次润滑日。
 - **📚 故障知识库**：工单归档为知识条目（根因/处置/预防自动填充）、全文检索、相似案例推荐、复发次数追踪、浏览统计。
@@ -583,7 +585,7 @@ Linux NFS 挂载：
 ### 恢复演练 SOP（建议每季度 1 次）
 1. 准备一台同网段空机器，部署一套 SEMS（空 db 也行）；
 2. 用上述"离线解密"拿到 `out.zip`；
-3. 进入系统管理 → 恢复备份 → 上传 zip；
+3. 进入系统配置 → 恢复备份 → 上传 zip；
 4. 校验：设备台账条数、工单条数、用户列表与生产一致；抽查 2~3 份上传附件是否能正常打开。
 
 相关代码：[backup_service.py](file:///workspace/backend/app/services/backup_service.py) · [backup_scheduler.py](file:///workspace/backend/app/services/backup_scheduler.py) · [system.py /backup/* API](file:///workspace/backend/app/api/v1/system.py) · [独立脚本 sh](file:///workspace/backend/scripts/sems_standalone_backup.sh) · [独立脚本 bat](file:///workspace/backend/scripts/sems_standalone_backup.bat)
@@ -903,7 +905,8 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 | POST | `/api/v1/process-doc-qc/documents/{id}/change-logs` | 创建修订记录 |
 | GET | `/api/v1/process-doc-qc/documents/{id}/distributions` | 分发记录列表 |
 | POST | `/api/v1/process-doc-qc/documents/{id}/distributions` | 创建分发记录 |
-| POST | `/api/v1/process-doc-qc/distributions/revoke` | 批量收回分发 |
+| POST | `/api/v1/process-doc-qc/distributions/return-batch` | 批量收回分发 |
+| DELETE | `/api/v1/process-doc-qc/distributions/{dist_id}` | 删除单条分发明细 |
 | GET | `/api/v1/process-doc-qc/review-alerts` | 复审告警统计 |
 | POST | `/api/v1/form-record-qc/records/{id}/audit` | 表单审核 |
 | GET | `/api/v1/form-record-qc/records/{id}/amendments` | 附加修正列表 |
@@ -941,7 +944,7 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 #### 数据模型
 
 - `SafetyInspection`：检查项主表
-  - `check_type`：检查类型（`safety_device` / `special_equipment` / `environmental` / `fire_protection`）
+  - `check_type`：检查类型（`safety_device` / 特种设备 / 环保 / 消防）
   - `frequency`：检查频次（`daily` / `weekly` / `monthly` / `quarterly` / `yearly`），用于自动推算下次检查日
   - `last_check_date` / `next_check_date`：上次检查 / 下次检查日
   - `result`：检查结果（`pending` / `pass` / `fail` / `n_a`）
@@ -961,28 +964,35 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 
 ---
 
-### ⏱ 工单 SLA / 升级（P1 合规安全侧）
+### ⏱ 工单 SLA / 超期升级（P1 日常运维侧）
 
-在 `WorkOrder` 模型上扩展 SLA 字段，避免单独立表带来的维护负担。
+在 `WorkOrder` 模型上扩展 SLA 字段，避免单独立表带来的维护负担。**界面文案统一使用"超期工单"**（替代更难懂的"SLA 违约"）。
 
 #### 数据字段（扩展 `WorkOrder`）
 
-- `sla_response_target_min` / `sla_resolution_target_min`：目标响应时长 / 目标解决时长（分钟）
-- `responded_at` / `resolved_at`：实际响应 / 实际解决时间
-- `sla_response_min` / `sla_resolution_min`：实际响应 / 实际解决时长（自动计算）
-- `sla_breached`：是否违约（布尔）
-- `escalated_to_id`：超时升级指派人 ID
-- `priority`：紧急度（与原有紧急度一致，用于 SLA 模板预设）
+- `sla_response_minutes` / `sla_resolution_minutes`：**目标**响应时长 / **目标**解决时长（分钟）
+- `actual_start` / `completed_at` / `actual_end`：派工时间 / 关闭时间（系统标准字段，作为响应/解决时间的计算依据）
+- `actual_response_minutes` / `actual_resolution_minutes`：**实际**响应时长 / **实际**解决时长（自动计算；派工触发响应时长，关闭触发解决时长）
+- `sla_breach`：是否**超期**（布尔），每次状态流转时由 `_recalc_sla` 重算
+- `escalated` / `escalated_to_id` / `escalated_at`：是否升级 / 升级到谁 / 升级时间
+- `urgency`：紧急度（LOW / NORMAL / HIGH / URGENT，可作为 SLA 目标预设参考）
+
+#### 计算机制（`_recalc_sla` 幂等重算）
+
+- 实际响应时长 = `actual_start − created_at`（需已派工及之后状态）
+- 实际解决时长 = `completed_at or actual_end − created_at`（需已关闭或取消）
+- 超期判定：任一实际时长 > 对应目标时长即标记超期
+- 所有写操作（设置 SLA / 关闭 / 升级）自动调用重算；`recalculate` 接口支持手动重算
 
 #### 功能
 
 | 操作 | 路径 | 说明 |
 |------|------|------|
-| 设置/更新 SLA 目标 | `PUT /api/v1/work-orders/{id}` 或 `PUT /api/v1/work-order-sla/{id}/targets` | 设定响应/解决时长目标 |
-| 标记响应 | `POST /api/v1/work-order-sla/{id}/respond` | 记录实际响应时间，自动计算 `sla_response_min` |
-| 标记解决 | `POST /api/v1/work-order-sla/{id}/resolve` | 记录实际解决时间，自动计算 `sla_resolution_min` 与 `sla_breached` |
-| 超时升级 | `POST /api/v1/work-order-sla/{id}/escalate` | 标记超时并指派升级人 |
-| SLA 统计 | `GET /api/v1/work-order-sla/stats` | SLA 达成率、平均响应/解决时长、违约数 |
+| 设置/更新 SLA 目标 | `PUT /api/v1/work-order-sla/{order_id}/sla` | 设定 `sla_response_minutes` / `sla_resolution_minutes`，自动重算超期标记 |
+| 超期工单列表 | `GET /api/v1/work-order-sla/breaches` | 返回所有 `sla_breach = True` 的工单 |
+| 超期升级 | `POST /api/v1/work-order-sla/{order_id}/escalate` | 指定升级目标用户 + 备注，可选同时改派负责人；自动重算 |
+| 手动重算 SLA | `POST /api/v1/work-order-sla/{order_id}/recalculate` | 用于受理/关闭时未自动计算的兜底场景 |
+| SLA 统计 | `GET /api/v1/work-order-sla/stats` | SLA 达成率、平均响应/解决时长、**超期工单数**、总览数 |
 
 ---
 
@@ -994,7 +1004,7 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 
 - `EquipmentLifecycle`：阶段记录表
   - `stage`：`T0`（选型）/ `T1`（采购）/ `T2`（安装调试）/ `T3`（量产移交）
-  - **T0 选型**：`vendor_candidates`（JSON 候选供应商列表）/ `selected_vendor` / `ur_summary`（URS 用户需求摘要）
+  - **T0 选型**：`vendor_candidates`（Text，候选供应商 JSON 字符串）/ `selected_vendor` / `ur_summary`（URS 用户需求摘要）
   - **T1 采购**：`po_no` / `po_amount` / `delivery_date`
   - **T2 安装调试**：`fat_date` / `fat_result` / `fat_notes`、`sat_date` / `sat_result` / `sat_notes`、`commissioning_date` / `commissioning_notes`
   - **T3 量产移交**：`handover_date` / `handover_to` / `acceptance_result` / `acceptance_notes`
@@ -1007,8 +1017,8 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 |------|------|------|
 | 阶段列表 | `GET /api/v1/equipment-lifecycle` | 支持按设备/阶段筛选 |
 | 新建阶段 | `POST /api/v1/equipment-lifecycle` | 新建任意阶段（建议按 T0→T3 顺序补齐） |
-| 编辑/删除 | `PUT/DELETE /api/v1/equipment-lifecycle/{id}` | 修改或删除阶段 |
-| 标记完成 | `POST /api/v1/equipment-lifecycle/{id}/complete` | 阶段流转到 `completed` |
+| 编辑/删除 | `PUT/DELETE /api/v1/equipment-lifecycle/{lifecycle_id}` | 修改或删除阶段（`status` 字段通过 PUT 流转） |
+| 设备时间线 | `GET /api/v1/equipment-lifecycle/equipment/{equipment_id}/timeline` | 按阶段 T0→T3 升序返回时间线 |
 
 > 前端页面按时间倒序展示各阶段卡片，并以时间线串联 T0→T3，便于设备主管一眼看全流程进度。
 
@@ -1021,12 +1031,13 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 #### 数据模型
 
 - `LubricationPoint`：润滑点定义（五定）
-  - `equipment_id` / `point_name` / `position`（定点）
-  - `responsible_person`（定人）
-  - `frequency` / `interval_days`（定时）
-  - `oil_type` / `oil_grade`（定质）
-  - `quantity` / `unit`（定量）
-  - `last_lubricated_date` / `next_lubricated_date`：上次/下次润滑日
+  - `equipment_id` / `point_name` / `point_code`（定点）
+  - `fixed_location`（定点：润滑位置描述）
+  - `fixed_person_id` / `fixed_person_name`（定人：负责人）
+  - `fixed_frequency`（定时：`daily` / `weekly` / `monthly` / `quarterly`）
+  - `fixed_oil_type`（定质：润滑油/脂牌号）
+  - `fixed_quantity`（定量：每次用量）
+  - `next_lubrication_date`：下次润滑日（执行后按频次自动推算）
 - `LubricationRecord`：润滑执行记录
   - 关联 `LubricationPoint`，记录执行人、实际用量、备注
 
@@ -1034,9 +1045,10 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 
 | 操作 | 路径 | 说明 |
 |------|------|------|
-| 润滑点 CRUD | `/api/v1/lubrication/points[/{id}]` | 维护润滑点主数据 |
-| 执行润滑 | `POST /api/v1/lubrication/points/{id}/record` | 提交执行记录，自动按 `interval_days` 推算下次润滑日 |
-| 到期告警 | `GET /api/v1/lubrication/due` | 拉取即将到期/已逾期润滑点 |
+| 润滑点 CRUD | `GET/POST/PUT/DELETE /api/v1/lubrication/points[/{point_id}]` | 维护润滑点主数据 |
+| 润滑记录列表 | `GET /api/v1/lubrication/records` | 支持按 `point_id` / `equipment_id` 过滤 |
+| 执行润滑 | `POST /api/v1/lubrication/records` | 提交执行记录，自动按 `fixed_frequency` 推算下次润滑日 |
+| 到期告警 | `GET /api/v1/lubrication/points/alerts` | 拉取即将到期/已逾期润滑点（默认 7 天内） |
 
 ---
 
@@ -1063,7 +1075,8 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 | 操作 | 路径 | 说明 |
 |------|------|------|
 | 知识列表 | `GET /api/v1/knowledge` | 支持按设备/分类/关键词全文检索（title / symptom / root_cause / solution） |
-| 从工单归档 | `POST /api/v1/knowledge/from-work-order/{wo_id}` | 把工单的描述/根因/处置/预防 + fault_category 自动填充为知识条目；payload 可覆盖 title / tags / equipment_model / fault_category |
+| 关键字搜索 | `GET /api/v1/knowledge/search` | 独立关键字搜索端点 |
+| 从工单归档 | `POST /api/v1/knowledge/from-work-order/{work_order_id}` | 把工单的描述/根因/处置/预防 + fault_category 自动填充为知识条目；payload 可覆盖 title / tags / equipment_model / fault_category |
 | **从 8D 报告归档** | **`POST /api/v1/knowledge/from-d8/{d8_id}`** | 自动提取 D0（problem）+ D2（problem_desc）→ symptom / D4 → root_cause / D5 → solution / D7 → prevention；默认标签 `8D,{报告编号}`；payload 可覆盖 title / tags / equipment_model / fault_category |
 | 知识 CRUD | `POST/PUT/DELETE /api/v1/knowledge[/{id}]` | 手动维护知识 |
 | 相似案例 | `GET /api/v1/knowledge/similar` | 按 `equipment_id` + `fault_category` 双维匹配推荐（同设备同分类优先，退化同设备或同分类） |
@@ -1079,20 +1092,20 @@ docker inspect --format='{{.State.Health.Log}}' sems-backend | jq .  # 看最近
 
 - `EquipmentCost`：成本记录
   - `equipment_id`：关联设备
-  - `cost_type`：成本类型（`purchase` 采购 / `maintenance` 维护 / `spare_part` 备件 / `energy` 能耗 / `depreciation` 折旧 / `disposal` 报废）
+  - `cost_type`：成本类型（`procurement` 采购 / `maintenance` 维护 / `spare_part` 备件 / `energy` 能耗 / `depreciation` 折旧 / `scrap` 报废）
   - `amount`：金额
-  - `occurred_date`：发生日期
-  - `remark` / `ref_type` / `ref_id`：备注与来源类型（如工单/PM 计划）
+  - `cost_date`：发生日期
+  - `description`：费用说明
+  - `work_order_id`：关联工单（可空）
+  - `spare_part_id`：关联备件（可空）
 
 #### 功能
 
 | 操作 | 路径 | 说明 |
 |------|------|------|
-| 成本记录 CRUD | `/api/v1/equipment-costs[/{id}]` | 按设备维护成本明细 |
-| 单设备汇总 | `GET /api/v1/equipment-costs/equipment/{eq_id}/summary` | 单设备各类成本汇总 + 总成本 |
-| 按类型统计 | `GET /api/v1/equipment-costs/stats/by-type` | 按成本类型汇总（饼图） |
-| 年度趋势 | `GET /api/v1/equipment-costs/stats/yearly-trend` | 按年汇总（折线图） |
-| Top10 高成本设备 | `GET /api/v1/equipment-costs/stats/top-equipment` | 排名前 10 的高成本设备 |
+| 成本记录 CRUD | `GET/POST/PUT/DELETE /api/v1/equipment-costs[/{cost_id}]` | 按设备维护成本明细 |
+| 全设备成本汇总 | `GET /api/v1/equipment-costs/summary` | 按类型汇总 + Top10 高成本设备 |
+| 单设备汇总 | `GET /api/v1/equipment-costs/equipment/{equipment_id}/summary` | 单设备各类成本汇总 + 总成本 + 年度趋势 |
 
 ---
 

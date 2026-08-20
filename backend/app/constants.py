@@ -70,12 +70,39 @@ _FEATURES_DEF = [
     ("asset.application_approve",    "资产审批",       "资产", ["admin"]),
     ("asset.application_complete",   "资产处置完成",   "资产", ["admin", "engineer"]),
 
-    # 生产
-    ("production.product_write",   "产品编辑",       "生产", ["admin", "engineer"]),
-    ("production.product_delete",   "产品删除",       "生产", ["admin"]),
-    ("production.record_create",    "生产记录提交",   "生产", ["admin", "engineer", "operator"]),
-    ("production.record_update",    "生产记录编辑",   "生产", ["admin", "engineer"]),
-    ("production.record_delete",    "生产记录删除",   "生产", ["admin"]),
+    # 生产管理（含原有生产记录 + 新增生产管理权限）
+    ("production.product_write",     "产品编辑",              "生产管理", ["admin", "engineer"]),
+    ("production.product_delete",    "产品删除",              "生产管理", ["admin"]),
+    ("production.record_create",     "生产记录提交",          "生产管理", ["admin", "engineer", "operator", "team_leader"]),
+    ("production.record_update",     "生产记录编辑",          "生产管理", ["admin", "engineer", "production_manager"]),
+    ("production.record_delete",     "生产记录删除",          "生产管理", ["admin"]),
+    ("production.mo_manage",         "生产订单创建/下发/结案", "生产管理", ["admin", "production_manager"]),
+    ("production.mo_view",           "生产订单查看",          "生产管理", ["admin", "production_manager", "team_leader", "operator", "process_engineer", "qa"]),
+    ("production.routing_write",     "工序路由编辑",          "生产管理", ["admin", "process_engineer"]),
+    ("production.routing_delete",    "工序路由删除",          "生产管理", ["admin"]),
+    ("production.section_write",     "工段编辑/新建（绑定设备组与工艺数据采集模板）", "生产管理", ["admin", "process_engineer"]),
+    ("production.section_delete",    "工段删除",              "生产管理", ["admin"]),
+    ("production.dispatch_assign",   "工序派工（分配到设备/班组）", "生产管理", ["admin", "production_manager", "team_leader"]),
+    ("production.labor_report",     "工序报工（产量/良率）",  "生产管理", ["admin", "team_leader", "operator"]),
+    ("production.labor_correct",    "报工修正",              "生产管理", ["admin", "production_manager", "team_leader"]),
+    ("production.wip_transfer",      "WIP 转序确认",          "生产管理", ["admin", "team_leader"]),
+    ("production.defect_record",    "缺陷记录登记",          "生产管理", ["admin", "team_leader", "operator", "qa"]),
+    ("production.yield_analysis",    "良率/报废分析",         "生产管理", ["admin", "production_manager", "process_engineer", "qa"]),
+    ("production.material_issue",    "辅料/耗材领用",         "生产管理", ["admin", "production_manager", "team_leader"]),
+    ("production.dashboard_full",    "全厂生产看板",          "生产管理", ["admin", "production_manager"]),
+    ("production.lot_manage",       "批次/谱系管理（创建/流转/绑定）", "生产管理", ["admin", "production_manager", "team_leader", "process_engineer"]),
+    ("production.lot_view",          "批次/谱系查询",         "生产管理", ["admin", "production_manager", "team_leader", "operator", "process_engineer", "qa"]),
+    ("production.ncr_manage",       "不合格品报告管理（创建/评审/结案）", "生产管理", ["admin", "production_manager", "qa", "process_engineer"]),
+    ("production.ncr_view",         "不合格品报告查询",      "生产管理", ["admin", "production_manager", "team_leader", "operator", "process_engineer", "qa"]),
+    ("production.poka_yoka_bypass", "防呆校验跳过（特殊放行）", "生产管理", ["admin"]),
+    ("production.fai_manage",       "首件检验管理(创建/提交/签核)", "生产管理", ["admin", "production_manager", "qa", "process_engineer"]),
+    ("production.fai_view",         "首件检验查询",          "生产管理", ["admin", "production_manager", "qa", "process_engineer", "team_leader", "operator"]),
+    ("production.kit_manage",      "物料齐套清单管理(录入/确认齐套)", "生产管理", ["admin", "production_manager", "team_leader"]),
+    ("production.kit_view",         "物料齐套查询",         "生产管理", ["admin", "production_manager", "team_leader", "operator"]),
+    ("production.spc_view",         "SPC 控制图查看",       "生产管理", ["admin", "production_manager", "process_engineer", "qa"]),
+    ("production.oee_view",         "OEE/WIP 看板查看",     "生产管理", ["admin", "production_manager", "process_engineer"]),
+    ("production.process_export",   "工艺数据 Excel 导出",   "生产管理", ["admin", "production_manager", "process_engineer", "qa"]),
+    ("production.pm_reminder_view", "PM 到期提醒查询",      "生产管理", ["admin", "production_manager", "engineer"]),
 
     # 系统
     ("dictionary.manage",          "字典管理",       "系统", ["admin"]),
@@ -84,6 +111,23 @@ _FEATURES_DEF = [
     ("system.ip_whitelist_manage",  "IP 白名单管理",  "系统", ["admin"]),
     ("system.restart_server",      "重启服务",       "系统", ["admin"]),
     ("system.backup_manage",       "系统备份/恢复",  "系统", ["admin"]),
+
+    # 故障知识库
+    ("knowledge.view",   "知识库查看/检索",   "故障知识库", ["admin", "engineer", "process_engineer", "qa", "operator", "viewer"]),
+    ("knowledge.write",  "知识库编辑/新增/归档", "故障知识库", ["admin", "engineer", "process_engineer", "qa"]),
+    ("knowledge.delete", "知识库删除",         "故障知识库", ["admin"]),
+
+    # 设备成本 LCC
+    ("equipment_cost.write",  "设备成本记录编辑/新增", "设备成本LCC", ["admin", "engineer"]),
+    ("equipment_cost.delete", "设备成本记录删除",       "设备成本LCC", ["admin"]),
+
+    # 设备生命周期
+    ("equipment_lifecycle.write",  "生命周期记录编辑/新增", "设备生命周期", ["admin", "engineer"]),
+    ("equipment_lifecycle.delete", "生命周期记录删除",     "设备生命周期", ["admin"]),
+
+    # 润滑管理
+    ("lubrication.write",  "润滑点/记录编辑/新增", "润滑管理", ["admin", "engineer", "operator"]),
+    ("lubrication.delete", "润滑点删除",            "润滑管理", ["admin"]),
 
     # 工艺文件
     ("process_doc.write",              "工艺文件上传/编辑",     "工艺文件", ["admin", "process_engineer"]),

@@ -176,7 +176,7 @@ def reliability_metrics(
     period_end = end or now
 
     wq = db.query(WorkOrder).filter(
-        WorkOrder.type.in_([WorkOrderType.REPAIR, WorkOrderType.REPORT]),
+        WorkOrder.type == WorkOrderType.REPAIR,
         WorkOrder.status == WorkOrderStatus.COMPLETED,
     )
     if equipment_id:

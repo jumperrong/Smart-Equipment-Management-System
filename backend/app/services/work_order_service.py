@@ -14,6 +14,15 @@ from app.schemas import (
 )
 from app.services import spare_part_service
 
+# 工单状态合法流转表
+VALID_WO_TRANSITIONS = {
+    ("CREATED", "ASSIGNED"), ("CREATED", "CANCELLED"),
+    ("ASSIGNED", "IN_PROGRESS"), ("ASSIGNED", "CANCELLED"),
+    ("IN_PROGRESS", "PENDING_REVIEW"), ("IN_PROGRESS", "CANCELLED"),
+    ("PENDING_REVIEW", "COMPLETED"), ("PENDING_REVIEW", "IN_PROGRESS"),
+    ("COMPLETED", "PENDING_REVIEW"),  # 允许退回重审
+}
+
 
 def _gen_order_no(db: Session) -> str:
     today = datetime.utcnow().strftime("%Y%m%d")
@@ -92,6 +101,13 @@ def update_work_order(db: Session, wo: WorkOrder, obj_in: WorkOrderUpdate):
         elif new_status == WorkOrderStatus.COMPLETED:
             data["actual_end"] = datetime.utcnow()
             data["completed_at"] = datetime.utcnow()
+    new_status = data.get("status")
+    if new_status:
+        old_status = wo.status.value if wo.status else None
+        if old_status and old_status != new_status:
+            if (old_status, new_status) not in VALID_WO_TRANSITIONS:
+                from fastapi import HTTPException
+                raise HTTPException(400, f"工单状态不允许从 {old_status} 跳转到 {new_status}")
     for k, v in data.items():
         setattr(wo, k, v)
     wo.updated_at = datetime.utcnow()

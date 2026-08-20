@@ -387,7 +387,7 @@ async function onUpload(file) {
 
 function downloadAtt(row) {
   const url = downloadAttachmentUrl(eqId, row.id)
-  const token = localStorage.getItem('token')
+  const token = localStorage.getItem('sems_token')
   // 通过 fetch 携带 token 下载
   fetch(url, { headers: { Authorization: `Bearer ${token}` } })
     .then((r) => r.blob())

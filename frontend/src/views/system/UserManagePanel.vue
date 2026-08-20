@@ -139,12 +139,14 @@ const roleOptions = [
   { value: 'engineer', label: '工程师' },
   { value: 'process_engineer', label: '工艺员' },
   { value: 'qa', label: 'QA审核员' },
-  { value: 'operator', label: '操作员' },
+  { value: 'production_manager', label: '生产主管' },
+  { value: 'team_leader', label: '班组长' },
+  { value: 'operator', label: '生产操作员' },
   { value: 'viewer', label: '查看者' },
 ]
-const roleLabels = { admin: '管理员', engineer: '工程师', process_engineer: '工艺员', qa: 'QA审核员', operator: '操作员', viewer: '查看者' }
+const roleLabels = { admin: '管理员', engineer: '工程师', process_engineer: '工艺员', qa: 'QA审核员', production_manager: '生产主管', team_leader: '班组长', operator: '生产操作员', viewer: '查看者' }
 const roleLabel = (r) => roleLabels[r] || r
-const roleTagType = (r) => ({ admin: 'danger', engineer: 'primary', process_engineer: 'warning', qa: 'danger', operator: 'success', viewer: 'info' }[r] || 'info')
+const roleTagType = (r) => ({ admin: 'danger', engineer: 'primary', process_engineer: 'warning', qa: 'danger', production_manager: 'primary', team_leader: 'success', operator: 'success', viewer: 'info' }[r] || 'info')
 
 // 新增/编辑表单
 const dialogVisible = ref(false)

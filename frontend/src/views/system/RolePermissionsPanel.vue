@@ -86,7 +86,9 @@ const roleLabels = {
   engineer: '工程师',
   process_engineer: '工艺员',
   qa: 'QA审核员',
-  operator: '操作员',
+  production_manager: '生产主管',
+  team_leader: '班组长',
+  operator: '生产操作员',
   viewer: '查看者',
 }
 const roleLabel = (r) => roleLabels[r] || r

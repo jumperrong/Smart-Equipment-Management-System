@@ -45,7 +45,7 @@ export const deleteProcessDocument = (id) =>
 
 // 下载工艺文件（携带 token，返回 blob）
 export function downloadProcessDocument(id, filename) {
-  const token = localStorage.getItem('token')
+  const token = localStorage.getItem('sems_token')
   return fetch(`${base}/${id}/download`, { headers: { Authorization: `Bearer ${token}` } })
     .then((r) => {
       if (!r.ok) throw new Error('下载失败')

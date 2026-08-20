@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, Any
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,6 +35,14 @@ def list_products(active_only: bool = False, db: Session = Depends(get_db), _=De
     return production_service.list_products(db, active_only=active_only)
 
 
+@prod_router.get("/{pid}", response_model=ProductOut)
+def get_product(pid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    obj = production_service.get_product(db, pid)
+    if not obj:
+        raise HTTPException(status_code=404, detail="产品不存在")
+    return obj
+
+
 @prod_router.post("", response_model=ProductOut, dependencies=[Depends(require_permission("production.product_write"))])
 def create_product(obj_in: ProductCreate, db: Session = Depends(get_db)):
     return production_service.create_product(db, obj_in)
@@ -52,6 +60,14 @@ def update_product(pid: int, obj_in: ProductUpdate, db: Session = Depends(get_db
 def delete_product(pid: int, db: Session = Depends(get_db)):
     production_service.delete_product(db, pid)
     return {"ok": True}
+
+
+@prod_router.post("/batch-import", dependencies=[Depends(require_permission("production.product_write"))])
+def batch_import_products_api(rows: List[dict], db: Session = Depends(get_db)):
+    """批量导入产品：请求体为数组，每项支持 code/name/spec/unit/target_cycle/remark/is_active 或中文字段名。"""
+    if not isinstance(rows, list):
+        raise HTTPException(400, "请求体必须是数组")
+    return production_service.batch_import_products(db, rows)
 
 
 # ---------- Production Records ----------

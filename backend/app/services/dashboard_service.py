@@ -658,6 +658,7 @@ def get_dashboard(db: Session, log_limit: int = 10, current_user=None) -> Dashbo
         "admin": [
             "kpi_admin", "equipment_status", "recent_work_orders",
             "review_overdue_docs", "low_stock_parts", "safety_alerts",
+            "today_production_summary",
         ],
         "engineer": [
             "kpi_engineer", "equipment_status", "my_open_work_orders",
@@ -671,8 +672,17 @@ def get_dashboard(db: Session, log_limit: int = 10, current_user=None) -> Dashbo
             "kpi_qa", "pending_review_docs", "review_overdue_docs",
             "safety_alerts",
         ],
+        "production_manager": [
+            "kpi_production_manager", "equipment_status", "today_production_summary",
+            "recent_work_orders",
+        ],
+        "team_leader": [
+            "kpi_team_leader", "equipment_status", "my_open_work_orders",
+            "today_production_summary",
+        ],
         "operator": [
             "kpi_operator", "equipment_status", "my_open_work_orders",
+            "my_production_records",
         ],
         "viewer": [
             "kpi_viewer", "equipment_status",
@@ -784,7 +794,7 @@ def get_dashboard(db: Session, log_limit: int = 10, current_user=None) -> Dashbo
             for wo in my_wos
         ]
         summary.my_open_work_orders = len(my_wos)
-        # SLA 违约数（assignee 是当前用户的违约工单）
+        # SLA 超期数（assignee 是当前用户的超期工单）
         summary.sla_breached_count = (
             db.query(WorkOrder)
             .filter(
@@ -794,7 +804,7 @@ def get_dashboard(db: Session, log_limit: int = 10, current_user=None) -> Dashbo
             .count()
         )
 
-    # admin / engineer：全量 SLA 违约数 + 备件低库存 + 故障复发 TOP（仅 engineer）
+    # admin / engineer：全量 SLA 超期数 + 备件低库存 + 故障复发 TOP（仅 engineer）
     if role in ("admin", "engineer"):
         # 备件低库存清单
         low_q = (
@@ -871,13 +881,110 @@ def get_dashboard(db: Session, log_limit: int = 10, current_user=None) -> Dashbo
         ]
         summary.lubrication_due = len(lub_q)
 
-    # operator 专属：今日未提交点检设备数（演示：当前所有日检模板都未提交）
+    # operator 专属：今日未提交点检设备数 + 我的生产记录
     if role == "operator":
         summary.my_inspection_pending = (
             db.query(InspectionTemplate)
             .filter(InspectionTemplate.is_active.is_(True), InspectionTemplate.frequency == "DAILY")
             .count()
         )
+        # 操作员今日生产记录
+        if user_id:
+            my_pr_q = (
+                db.query(ProductionRecord)
+                .filter(
+                    ProductionRecord.operator_id == user_id,
+                    ProductionRecord.start_time >= now.replace(hour=0, minute=0, second=0, microsecond=0),
+                )
+                .order_by(ProductionRecord.id.desc())
+                .limit(10)
+                .all()
+            )
+            my_production_records = [
+                {"id": pr.id, "record_no": pr.record_no,
+                 "equipment_id": pr.equipment_id,
+                 "equipment_name": eq_name_map.get(pr.equipment_id, f"#{pr.equipment_id}"),
+                 "product_name": pr.product.name if pr.product else None,
+                 "batch_no": pr.batch_no, "plan_qty": pr.plan_qty,
+                 "good_qty": pr.good_qty, "defect_qty": pr.defect_qty,
+                 "start_time": pr.start_time.isoformat() if pr.start_time else None,
+                 "end_time": pr.end_time.isoformat() if pr.end_time else None}
+                for pr in my_pr_q
+            ]
+            summary.my_today_reports = len(my_pr_q)
+
+    # ===== 生产主管 / 班组长 专属数据 =====
+    today_pr_q = None
+    today_production_summary = []
+    if role in ("production_manager", "team_leader", "admin"):
+        # 今日各设备产量汇总
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_pr_q = (
+            db.query(ProductionRecord)
+            .filter(ProductionRecord.start_time >= today_start)
+            .order_by(ProductionRecord.id.desc())
+            .limit(30)
+            .all()
+        )
+        today_production_summary = [
+            {"id": pr.id, "record_no": pr.record_no,
+             "equipment_id": pr.equipment_id,
+             "equipment_name": eq_name_map.get(pr.equipment_id, f"#{pr.equipment_id}"),
+             "product_name": pr.product.name if pr.product else None,
+             "batch_no": pr.batch_no,
+             "plan_qty": pr.plan_qty, "good_qty": pr.good_qty,
+             "defect_qty": pr.defect_qty,
+             "yield_rate": round(pr.good_qty / pr.input_qty * 100, 1) if pr.input_qty and pr.input_qty > 0 else 0,
+             "start_time": pr.start_time.isoformat() if pr.start_time else None,
+             "end_time": pr.end_time.isoformat() if pr.end_time else None}
+            for pr in today_pr_q
+        ]
+        # 今日产量 KPI
+        summary.today_plan_qty = sum(pr.plan_qty or 0 for pr in today_pr_q)
+        summary.today_actual_qty = sum(pr.good_qty or 0 for pr in today_pr_q)
+        summary.today_defect_count = sum(pr.defect_qty or 0 for pr in today_pr_q)
+        summary.active_production_records = len(today_pr_q)
+        if summary.today_plan_qty > 0:
+            summary.today_achievement_rate = round(summary.today_actual_qty / summary.today_plan_qty * 100, 1)
+        total_input = sum(pr.input_qty or 0 for pr in today_pr_q)
+        if total_input > 0:
+            summary.today_yield_rate = round(summary.today_actual_qty / total_input * 100, 1)
+
+    # 班组长专属：SLA超期工单 + 待转序（演示用现有数据）
+    if role == "team_leader" and user_id:
+        my_wos = (
+            db.query(WorkOrder)
+            .filter(
+                WorkOrder.assignee_id == user_id,
+                WorkOrder.status.in_(OPEN_WO_STATUSES),
+            )
+            .order_by(WorkOrder.id.desc())
+            .limit(10)
+            .all()
+        )
+        my_open_work_orders_list = [
+            {"id": wo.id, "order_no": wo.order_no, "type": wo.type.value if wo.type else None,
+             "status": wo.status.value if wo.status else None,
+             "title": wo.title, "equipment_id": wo.equipment_id,
+             "equipment_name": eq_name_map.get(wo.equipment_id, f"#{wo.equipment_id}"),
+             "created_at": wo.created_at.isoformat() if wo.created_at else None}
+            for wo in my_wos
+        ]
+        summary.my_open_work_orders = len(my_wos)
+        summary.sla_breached_count = (
+            db.query(WorkOrder)
+            .filter(WorkOrder.assignee_id == user_id, WorkOrder.sla_breach.is_(True))
+            .count()
+        )
+
+    # 生产主管专属：全量超期工单
+    if role == "production_manager":
+        summary.sla_breached_count = (
+            db.query(WorkOrder)
+            .filter(WorkOrder.sla_breach.is_(True))
+            .count()
+        )
+
 
     return DashboardOut(
         summary=summary,
@@ -894,6 +1001,8 @@ def get_dashboard(db: Session, log_limit: int = 10, current_user=None) -> Dashbo
         low_stock_parts_list=low_stock_parts_list,
         safety_alerts_list=safety_alerts_list,
         lubrication_due_list=lubrication_due_list,
+        my_production_records=my_production_records if role == "operator" else [],
+        today_production_summary=today_production_summary,
     )
 
 

@@ -14,7 +14,10 @@ class UserRole(str, Enum):
     ENGINEER = "engineer"
     PROCESS_ENGINEER = "process_engineer"
     QA = "qa"
-    OPERATOR = "operator"
+    # 生产管理角色
+    PRODUCTION_MANAGER = "production_manager"   # 生产主管
+    TEAM_LEADER = "team_leader"                 # 班组长
+    OPERATOR = "operator"                       # 生产操作员（非设备部门人员）
     VIEWER = "viewer"
 
 
@@ -367,7 +370,7 @@ class WorkOrder(Base):
     sla_resolution_minutes = Column(Integer, nullable=True, comment="SLA目标解决时长(分钟)")
     actual_response_minutes = Column(Integer, nullable=True, comment="实际响应时长(分钟, 创建到首次受理)")
     actual_resolution_minutes = Column(Integer, nullable=True, comment="实际解决时长(分钟, 创建到关闭)")
-    sla_breach = Column(Boolean, default=False, nullable=False, comment="SLA是否违约")
+    sla_breach = Column(Boolean, default=False, nullable=False, comment="SLA是否超期")
     escalated = Column(Boolean, default=False, nullable=False, comment="是否已升级")
     escalated_to_id = Column(Integer, ForeignKey("users.id"), nullable=True, comment="升级到谁")
     escalated_at = Column(DateTime, nullable=True, comment="升级时间")
@@ -653,6 +656,7 @@ class Product(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     production_records = relationship("ProductionRecord", back_populates="product")
+    routings = relationship("Routing", back_populates="product", order_by="Routing.id.desc()")
 
 
 class ProductionRecord(Base):
@@ -1249,4 +1253,451 @@ class EquipmentCost(Base):
     recorded_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     recorded_by_name = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ============ 模块 N: 生产管理 ============
+
+class RoutingStatus(str, Enum):
+    """工序路由状态"""
+    DRAFT = "DRAFT"           # 草稿
+    EFFECTIVE = "EFFECTIVE"   # 生效
+    OBSOLETE = "OBSOLETE"     # 作废
+
+
+class ProductionOrderStatus(str, Enum):
+    """生产订单状态"""
+    DRAFT = "DRAFT"               # 草稿
+    RELEASED = "RELEASED"         # 已下发
+    IN_PROGRESS = "IN_PROGRESS"   # 开工
+    COMPLETED = "COMPLETED"       # 完工待结
+    CLOSED = "CLOSED"             # 结案
+    CANCELLED = "CANCELLED"       # 取消
+
+
+class MOSourceType(str, Enum):
+    """生产订单来源"""
+    MANUAL = "MANUAL"         # 人工创建
+    ERP_IMPORT = "ERP_IMPORT" # ERP同步(预留)
+    REWORK = "REWORK"         # 返工单
+
+
+class DispatchStatus(str, Enum):
+    """工序派工状态"""
+    QUEUED = "QUEUED"         # 排队
+    ASSIGNED = "ASSIGNED"     # 已派
+    RUNNING = "RUNNING"       # 开工
+    COMPLETED = "COMPLETED"   # 完工
+    SCRAPPED = "SCRAPPED"     # 报废
+    HELD = "HELD"             # 暂停
+
+
+class LotStatus(str, Enum):
+    """批次状态"""
+    OPEN = "OPEN"             # 新建/待投入
+    IN_WIP = "IN_WIP"         # 在制
+    COMPLETED = "COMPLETED"   # 完工
+    SCRAPPED = "SCRAPPED"     # 报废
+    ON_HOLD = "ON_HOLD"       # 暂停(NCR/待评审)
+    CLOSED = "CLOSED"         # 结案
+
+
+class LotTransactionType(str, Enum):
+    """批次流转类型"""
+    RECEIVE = "RECEIVE"        # 投入(开工领料)
+    TRANSFER = "TRANSFER"      # 转序(工序间流转)
+    SPLIT = "SPLIT"            # 分批
+    MERGE = "MERGE"            # 合批
+    COMPLETE = "COMPLETE"      # 完工入仓
+    SCRAP = "SCRAP"            # 报废
+
+
+class NCRStatus(str, Enum):
+    """不合格品报告状态"""
+    OPEN = "OPEN"              # 新建待评审
+    UNDER_REVIEW = "UNDER_REVIEW"  # 评审中
+    DISPOSITIONED = "DISPOSITIONED"  # 已判定
+    CLOSED = "CLOSED"          # 已结案
+
+
+class NCRSeverity(str, Enum):
+    """不合格严重度"""
+    CRITICAL = "CRITICAL"     # 严重(关键尺寸/晶向/Ra超差)
+    MAJOR = "MAJOR"           # 主要(数量偏差/可返工)
+    MINOR = "MINOR"           # 次要(外观/可让步)
+
+
+class NCRDisposition(str, Enum):
+    """不合格处置方式"""
+    REWORK = "REWORK"         # 返工
+    SCRAP = "SCRAP"           # 报废
+    USE_AS_IS = "USE_AS_IS"   # 让步接收
+    RETURN_TO_VENDOR = "RETURN_TO_VENDOR"  # 退回供应商
+    PENDING = "PENDING"      # 待定
+
+
+class Routing(Base):
+    """工序路由（产品工艺路线主表）"""
+    __tablename__ = "routings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    version = Column(String(32), nullable=False, comment="版本号 如 v1.0")
+    status = Column(String(16), default=RoutingStatus.DRAFT.value, nullable=False, comment="DRAFT/EFFECTIVE/OBSOLETE")
+    effective_date = Column(DateTime, nullable=True, comment="生效日期")
+    review_cycle_month = Column(Integer, default=12, comment="复审周期(月)")
+    next_review_date = Column(DateTime, nullable=True, comment="下次复审日期")
+    change_reason = Column(String(255), nullable=True, comment="变更原因")
+    remark = Column(String(500), nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_by_name = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    product = relationship("Product", back_populates="routings")
+    steps = relationship("RoutingStep", back_populates="routing", order_by="RoutingStep.seq", cascade="all, delete-orphan")
+
+
+class ProcessSection(Base):
+    """工段库（管理员自定义的可复用工艺单元）。
+
+    一个工段绑定到一个"设备组"（模板层），并关联一个 FormTemplate 定义工艺参数采集字段。
+    生产人员派工时可指定在组内某台具体设备上执行（执行层，见 Dispatch.equipment_id）。
+
+    用途：
+    - 管理员维护工段库，一处定义全局复用
+    - 创建工序路由 RoutingStep 时引用工段快速填充字段
+    - 派工创建时按工段关联的 FormTemplate 自动初始化空白工艺数据表单
+    """
+    __tablename__ = "process_sections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(128), nullable=False, comment="工段名称 如 精车工序")
+    code = Column(String(64), unique=True, index=True, nullable=True, comment="工段编码(可选,便于跨环境迁移匹配)")
+    equipment_group = Column(String(128), nullable=True, index=True, comment="允许的设备组(模板层绑定)")
+    form_template_id = Column(Integer, ForeignKey("form_templates.id"), nullable=True, comment="工艺数据采集字段模板")
+    standard_cycle_min = Column(Float, nullable=True, comment="标准工时(分钟)")
+    theoretical_uph = Column(Float, nullable=True, comment="理论每小时产出")
+    required_skill_level = Column(String(32), nullable=True, comment="要求操作资质级别")
+    acceptance_criteria = Column(Text, nullable=True, comment="判定标准")
+    sop_doc_id = Column(Integer, ForeignKey("process_documents.id"), nullable=True, comment="关联SOP工艺文件")
+    description = Column(String(500), nullable=True, comment="工段说明")
+    is_active = Column(Boolean, default=True, nullable=False, server_default=text("1"), comment="启用/停用")
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_by_name = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    form_template = relationship("FormTemplate", foreign_keys=[form_template_id])
+
+
+class RoutingStep(Base):
+    """工序步骤（工艺路线中的每道工序）"""
+    __tablename__ = "routing_steps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    routing_id = Column(Integer, ForeignKey("routings.id", ondelete="CASCADE"), nullable=False, index=True)
+    seq = Column(Integer, nullable=False, comment="工序序号 10/20/30...")
+    step_name = Column(String(128), nullable=False, comment="工序名称")
+    process_section_id = Column(Integer, ForeignKey("process_sections.id"), nullable=True, index=True, comment="引用的工段(可空,从工段库快速填充)")
+    standard_cycle_min = Column(Float, nullable=True, comment="标准工时(分钟)")
+    theoretical_uph = Column(Float, nullable=True, comment="理论每小时产出")
+    process_params_schema = Column(JSON, nullable=True, comment="工艺参数字段定义(JSON)")
+    acceptance_criteria = Column(Text, nullable=True, comment="判定标准")
+    sop_doc_id = Column(Integer, ForeignKey("process_documents.id"), nullable=True, comment="关联SOP工艺文件")
+    param_form_template_id = Column(Integer, ForeignKey("form_templates.id"), nullable=True, comment="参数记录表模板")
+    equipment_group = Column(String(128), nullable=True, comment="允许的设备组")
+    required_skill_level = Column(String(32), nullable=True, comment="要求操作资质级别")
+    remark = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    routing = relationship("Routing", back_populates="steps")
+    process_section = relationship("ProcessSection", foreign_keys=[process_section_id])
+
+
+class ProductionOrder(Base):
+    """生产订单 (MO)"""
+    __tablename__ = "production_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    mo_no = Column(String(32), unique=True, index=True, nullable=False, comment="MO编号 如 MO-20260801-0001")
+    batch_no = Column(String(64), nullable=True, comment="生产批次号")
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    routing_id = Column(Integer, ForeignKey("routings.id"), nullable=True, comment="采用的工序路由版本")
+    priority = Column(String(16), default="NORMAL", comment="HIGH/NORMAL/LOW")
+    status = Column(String(16), default=ProductionOrderStatus.DRAFT.value, nullable=False, comment="DRAFT/RELEASED/IN_PROGRESS/COMPLETED/CLOSED/CANCELLED")
+    source_type = Column(String(16), default=MOSourceType.MANUAL.value, comment="MANUAL/ERP_IMPORT/REWORK")
+    parent_mo_id = Column(Integer, ForeignKey("production_orders.id"), nullable=True, comment="返工单来源MO")
+    customer_po = Column(String(64), nullable=True, comment="客户PO(可选)")
+    plan_qty = Column(Integer, default=0, nullable=False, comment="计划数量")
+    input_qty = Column(Integer, default=0, comment="投入数量")
+    completed_qty = Column(Integer, default=0, comment="完工合格数量")
+    scrapped_qty = Column(Integer, default=0, comment="报废数量")
+    planned_start = Column(DateTime, nullable=True, comment="计划开始")
+    planned_end = Column(DateTime, nullable=True, comment="计划结束")
+    actual_start = Column(DateTime, nullable=True, comment="实际开始")
+    actual_end = Column(DateTime, nullable=True, comment="实际结束")
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_by_name = Column(String(64), nullable=True)
+    released_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    released_by_name = Column(String(64), nullable=True)
+    closed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    closed_by_name = Column(String(64), nullable=True)
+    remark = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    product = relationship("Product")
+    dispatches = relationship("Dispatch", back_populates="production_order")
+
+
+class Dispatch(Base):
+    """工序派工单"""
+    __tablename__ = "dispatches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    mo_id = Column(Integer, ForeignKey("production_orders.id"), nullable=False, index=True)
+    step_seq = Column(Integer, nullable=False, comment="工序序号")
+    step_name = Column(String(128), nullable=False, comment="工序名称")
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=True, index=True, comment="派工到哪台设备")
+    assigned_operator_id = Column(Integer, ForeignKey("users.id"), nullable=True, comment="派工作业员")
+    assigned_team = Column(String(64), nullable=True, comment="班组")
+    dispatch_qty = Column(Integer, default=0, nullable=False, comment="派工数量")
+    completed_qty = Column(Integer, default=0, comment="完工数量")
+    scrapped_qty = Column(Integer, default=0, comment="报废数量")
+    wip_qty = Column(Integer, default=0, comment="在制数量")
+    status = Column(String(16), default=DispatchStatus.QUEUED.value, nullable=False, comment="QUEUED/ASSIGNED/RUNNING/COMPLETED/SCRAPPED/HELD")
+    held_reason = Column(String(255), nullable=True, comment="暂停原因: DOWN机/缺料/工艺异常")
+    held_work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True, comment="暂停关联的维修工单")
+    process_section_id = Column(Integer, ForeignKey("process_sections.id"), nullable=True, index=True, comment="引用的工段(执行时按工段模板采集工艺数据)")
+    form_template_id = Column(Integer, ForeignKey("form_templates.id"), nullable=True, comment="派工采用的工艺数据字段模板(冗余,便于查询)")
+    form_record_id = Column(Integer, ForeignKey("form_records.id"), nullable=True, index=True, comment="派工自动初始化的工艺数据填写表单")
+    is_fai = Column(Boolean, default=False, nullable=False, server_default=text("0"), comment="是否首件派工(换型首件需 QA 签核才能批量生产)")
+    planned_start = Column(DateTime, nullable=True)
+    planned_end = Column(DateTime, nullable=True)
+    actual_start = Column(DateTime, nullable=True)
+    actual_end = Column(DateTime, nullable=True)
+    remark = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    production_order = relationship("ProductionOrder", back_populates="dispatches")
     equipment = relationship("Equipment")
+    labor_reports = relationship("LaborReport", back_populates="dispatch", order_by="LaborReport.id.desc()")
+    form_record = relationship("FormRecord", foreign_keys=[form_record_id])
+
+
+class LaborReport(Base):
+    """逐工序报工记录"""
+    __tablename__ = "labor_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dispatch_id = Column(Integer, ForeignKey("dispatches.id"), nullable=False, index=True)
+    reporter_id = Column(Integer, ForeignKey("users.id"), nullable=True, comment="报工人")
+    reporter_name = Column(String(64), nullable=True)
+    report_time = Column(DateTime, default=datetime.utcnow, nullable=False, comment="报工时间")
+    session_start = Column(DateTime, nullable=True, comment="作业时段开始")
+    session_end = Column(DateTime, nullable=True, comment="作业时段结束")
+    input_qty = Column(Integer, default=0, comment="投入数量")
+    good_qty = Column(Integer, default=0, comment="合格数量")
+    defect_qty = Column(Integer, default=0, comment="不良数量")
+    defect_detail = Column(JSON, nullable=True, comment="按缺陷码分拆 {划伤:2, 异物:1}")
+    operator_ids = Column(JSON, nullable=True, comment="协作人员ID列表")
+    man_hours = Column(Float, nullable=True, comment="人×小时")
+    form_record_id = Column(Integer, ForeignKey("form_records.id"), nullable=True, comment="关联的参数记录表")
+    remark = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    dispatch = relationship("Dispatch", back_populates="labor_reports")
+
+
+# ============ 模块 N+1: 批次追溯 / 不合格品 ============
+
+class Lot(Base):
+    """物料/产品批次（追溯主键）。
+
+    用于追踪一片晶圆/一根晶锭从投入到产出全过程的身份。
+    产出关系：LaborReport 报工时产出 lot；批次在工序间流转形成 LotTransaction 链路。
+    谱系关系：上游 lot -> 下游 lot 通过 LotGenealogy 多对多记录（如多晶锭lot -> 单晶锭lot）。
+    """
+    __tablename__ = "lots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    lot_no = Column(String(64), unique=True, index=True, nullable=False, comment="批次号 如 LOT-20260820-0001")
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    qty = Column(Integer, default=0, nullable=False, comment="批次数量")
+    unit = Column(String(16), nullable=True, comment="单位(冗余自产品)")
+    status = Column(String(16), default=LotStatus.OPEN.value, nullable=False, comment="OPEN/IN_WIP/COMPLETED/SCRAPPED/ON_HOLD/CLOSED")
+    source_type = Column(String(32), default="MO_OUTPUT", comment="来源: MO_OUTPUT/PURCHASE/TRANSFER/REWORK")
+    mo_id = Column(Integer, ForeignKey("production_orders.id"), nullable=True, index=True, comment="产出该批次的MO(成品批次)")
+    origin_dispatch_id = Column(Integer, ForeignKey("dispatches.id"), nullable=True, comment="产出该批次的派工(工序产出批次)")
+    origin_labor_report_id = Column(Integer, ForeignKey("labor_reports.id"), nullable=True, comment="产出该批次的报工记录")
+    current_step_seq = Column(Integer, nullable=True, comment="当前所在工序序号")
+    current_dispatch_id = Column(Integer, ForeignKey("dispatches.id"), nullable=True, comment="当前派工")
+    hold_reason = Column(String(255), nullable=True, comment="暂停原因(NCR关联)")
+    ncr_id = Column(Integer, ForeignKey("non_conformance_reports.id"), nullable=True, comment="关联的NCR")
+    supplier_lot = Column(String(64), nullable=True, comment="供应商批次(采购件)")
+    remark = Column(String(500), nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_by_name = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    product = relationship("Product")
+    production_order = relationship("ProductionOrder", foreign_keys=[mo_id])
+    transactions = relationship("LotTransaction", back_populates="lot", order_by="LotTransaction.id", cascade="all, delete-orphan", foreign_keys="LotTransaction.lot_id")
+    # 谱系
+    parents = relationship("LotGenealogy", back_populates="child_lot", foreign_keys="LotGenealogy.child_lot_id", cascade="all, delete-orphan")
+    children = relationship("LotGenealogy", back_populates="parent_lot", foreign_keys="LotGenealogy.parent_lot_id", cascade="all, delete-orphan")
+
+
+class LotTransaction(Base):
+    """批次流转记录（工序间身份变化日志）"""
+    __tablename__ = "lot_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    lot_id = Column(Integer, ForeignKey("lots.id"), nullable=False, index=True)
+    txn_type = Column(String(16), nullable=False, comment="RECEIVE/TRANSFER/SPLIT/MERGE/COMPLETE/SCRAP")
+    from_step_seq = Column(Integer, nullable=True, comment="来源工序")
+    to_step_seq = Column(Integer, nullable=True, comment="去向工序")
+    dispatch_id = Column(Integer, ForeignKey("dispatches.id"), nullable=True, comment="关联派工")
+    labor_report_id = Column(Integer, ForeignKey("labor_reports.id"), nullable=True, comment="关联报工")
+    in_qty = Column(Integer, default=0, comment="投入数量")
+    out_qty = Column(Integer, default=0, comment="产出数量")
+    defect_qty = Column(Integer, default=0, comment="不良数量")
+    from_lot_id = Column(Integer, ForeignKey("lots.id"), nullable=True, comment="合批/分批来源")
+    to_lot_id = Column(Integer, ForeignKey("lots.id"), nullable=True, comment="合批/分批去向")
+    operator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    operator_name = Column(String(64), nullable=True)
+    txn_time = Column(DateTime, default=datetime.utcnow, nullable=False)
+    remark = Column(String(500), nullable=True)
+
+    lot = relationship("Lot", back_populates="transactions", foreign_keys=[lot_id])
+
+
+class LotGenealogy(Base):
+    """批次谱系（上游 lot -> 下游 lot 多对多）"""
+    __tablename__ = "lot_genealogy"
+
+    id = Column(Integer, primary_key=True, index=True)
+    parent_lot_id = Column(Integer, ForeignKey("lots.id", ondelete="CASCADE"), nullable=False, index=True)
+    child_lot_id = Column(Integer, ForeignKey("lots.id", ondelete="CASCADE"), nullable=False, index=True)
+    consume_qty = Column(Integer, default=0, comment="消耗上游lot数量")
+    conversion_ratio = Column(Float, nullable=True, comment="转换比(下游qty/上游qty)")
+    relation_type = Column(String(32), default="PROCESS", comment="PROCESS(工序产出)/SPLIT/MERGE")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    remark = Column(String(255), nullable=True)
+
+    parent_lot = relationship("Lot", back_populates="children", foreign_keys=[parent_lot_id])
+    child_lot = relationship("Lot", back_populates="parents", foreign_keys=[child_lot_id])
+
+
+class NonConformanceReport(Base):
+    """不合格品报告（NCR）
+
+    来源：报工(LaborReport)、检测、客户投诉；状态：OPEN->UNDER_REVIEW->DISPOSITIONED->CLOSED。
+    处置：返工/报废/让步接收/退供应商，并联动 lot 状态。
+    """
+    __tablename__ = "non_conformance_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ncr_no = Column(String(64), unique=True, index=True, nullable=False, comment="NCR编号")
+    title = Column(String(255), nullable=True, comment="标题/简述")
+    source_type = Column(String(32), nullable=False, comment="LABOR_REPORT/INSPECTION/CUSTOMER_COMPLAINT")
+    source_ref_id = Column(Integer, nullable=True, comment="来源对象ID(报工ID/检测记录ID)")
+    labor_report_id = Column(Integer, ForeignKey("labor_reports.id"), nullable=True, index=True, comment="关联报工")
+    dispatch_id = Column(Integer, ForeignKey("dispatches.id"), nullable=True, index=True, comment="关联派工")
+    mo_id = Column(Integer, ForeignKey("production_orders.id"), nullable=True, index=True, comment="关联MO")
+    lot_id = Column(Integer, ForeignKey("lots.id"), nullable=True, index=True, comment="关联批次")
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+    defect_code = Column(String(64), nullable=True, comment="缺陷码(如 PARTICLES/TTV/Ra_OOS/ORIENTATION)")
+    defect_description = Column(Text, nullable=True, comment="缺陷描述")
+    defect_qty = Column(Integer, default=0, comment="不合格数量")
+    severity = Column(String(16), default=NCRSeverity.MAJOR.value, comment="CRITICAL/MAJOR/MINOR")
+    status = Column(String(16), default=NCRStatus.OPEN.value, nullable=False, comment="OPEN/UNDER_REVIEW/DISPOSITIONED/CLOSED")
+    disposition = Column(String(32), default=NCRDisposition.PENDING.value, comment="REWORK/SCRAP/USE_AS_IS/RETURN_TO_VENDOR/PENDING")
+    root_cause = Column(Text, nullable=True, comment="根本原因")
+    corrective_action = Column(Text, nullable=True, comment="纠正措施")
+    reviewer_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reviewer_name = Column(String(64), nullable=True)
+    review_time = Column(DateTime, nullable=True)
+    review_remark = Column(Text, nullable=True)
+    closed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    closed_by_name = Column(String(64), nullable=True)
+    closed_at = Column(DateTime, nullable=True)
+    reporter_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reporter_name = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ============ 模块 N+2: 首件检验 FAI + 物料齐套 Kit Check ============
+
+class FAIStatus(str, Enum):
+    """首件检验状态"""
+    DRAFT = "DRAFT"                 # 待提交
+    PENDING_QA = "PENDING_QA"       # 已提交待 QA 签核
+    APPROVED = "APPROVED"           # QA 通过（允许批量生产）
+    REJECTED = "REJECTED"           # QA 不通过（需返工/重做）
+
+
+class FirstArticleInspection(Base):
+    """首件检验报告（FAI）。
+
+    场景：换型/换班首件必须 QA 签核才能批量生产。
+    绑定到 Dispatch：标记该派工为首件派工后，FAI 必须 APPROVED 才能 RUNNING；
+    若派工 is_fai=true 且无 APPROVED FAI，则防呆拦截后续批量报工。
+    状态：DRAFT -> PENDING_QA -> APPROVED/REJECTED。
+    """
+    __tablename__ = "first_article_inspections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    fai_no = Column(String(64), unique=True, index=True, nullable=False, comment="FAI编号")
+    dispatch_id = Column(Integer, ForeignKey("dispatches.id"), nullable=False, index=True, comment="首件派工")
+    mo_id = Column(Integer, ForeignKey("production_orders.id"), nullable=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipments.id"), nullable=True, index=True)
+    change_type = Column(String(32), default="PRODUCT_CHANGE", comment="换型类型: PRODUCT_CHANGE/SHIFT_CHANGE/PROCESS_CHANGE/EQUIPMENT_CHANGE")
+    sample_qty = Column(Integer, default=1, comment="首件抽样数")
+    inspection_data = Column(JSON, nullable=True, comment="检测项目与结果快照(数组)")
+    conclusion = Column(Text, nullable=True, comment="结论/判定")
+    status = Column(String(16), default=FAIStatus.DRAFT.value, nullable=False, comment="DRAFT/PENDING_QA/APPROVED/REJECTED")
+    submitted_at = Column(DateTime, nullable=True)
+    submitted_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    submitted_by_name = Column(String(64), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    reviewed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reviewed_by_name = Column(String(64), nullable=True)
+    review_remark = Column(Text, nullable=True, comment="QA 签核意见")
+    reject_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MaterialKitItem(Base):
+    """派工物料齐套清单项。
+
+    场景：派工开工前由计划员/仓管录入或导入物料需求与齐套状态；
+    防呆校验：dispatch_id 下任一 MaterialKitItem.is_kitted=false 不允许开工。
+    简化设计：不建独立物料主档与库存表（无 ERP），由人工录入物料名+需量+齐套状态。
+    """
+    __tablename__ = "material_kit_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dispatch_id = Column(Integer, ForeignKey("dispatches.id", ondelete="CASCADE"), nullable=False, index=True)
+    material_code = Column(String(64), nullable=True, comment="物料编码")
+    material_name = Column(String(255), nullable=False, comment="物料名称")
+    spec = Column(String(255), nullable=True, comment="规格")
+    unit = Column(String(32), nullable=True, comment="单位")
+    required_qty = Column(Float, default=0, comment="需求量")
+    available_qty = Column(Float, default=0, comment="可用量(库存)")
+    is_kitted = Column(Boolean, default=False, nullable=False, server_default=text("0"), comment="是否齐套(已备料)")
+    shortage_qty = Column(Float, default=0, comment="缺口量")
+    location = Column(String(128), nullable=True, comment="库位")
+    remark = Column(String(500), nullable=True)
+    checked_at = Column(DateTime, nullable=True, comment="齐套确认时间")
+    checked_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    checked_by_name = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

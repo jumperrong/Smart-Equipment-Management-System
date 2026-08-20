@@ -13,7 +13,7 @@ from app.schemas import (
     SafetyInspectionCheckIn,
 )
 from app.services.user_service import get_current_user
-from app.services.permission_service import is_allowed
+from app.services.permission_service import require_permission
 
 router = APIRouter(prefix="/safety-inspections", tags=["安全检查"])
 
@@ -39,12 +39,7 @@ def _compute_next_check_date(
     return (base or datetime.utcnow()) + timedelta(days=days)
 
 
-def _require(db: Session, role, feature_key: str) -> None:
-    if not is_allowed(db, role, feature_key):
-        raise HTTPException(status_code=403, detail="权限不足")
-
-
-@router.get("", response_model=List[SafetyInspectionOut])
+@router.get("", response_model=List[SafetyInspectionOut], dependencies=[Depends(require_permission("safety.view"))])
 def list_safety_inspections(
     equipment_id: Optional[int] = None,
     check_type: Optional[str] = None,
@@ -55,9 +50,7 @@ def list_safety_inspections(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
-    _require(db, current_user.role, "safety.view")
     q = db.query(SafetyInspection)
     if equipment_id is not None:
         q = q.filter(SafetyInspection.equipment_id == equipment_id)
@@ -80,13 +73,11 @@ def list_safety_inspections(
     return rows
 
 
-@router.post("", response_model=SafetyInspectionOut)
+@router.post("", response_model=SafetyInspectionOut, dependencies=[Depends(require_permission("safety.write"))])
 def create_safety_inspection(
     obj_in: SafetyInspectionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
-    _require(db, current_user.role, "safety.write")
     data = obj_in.model_dump(exclude_unset=True)
     # 未显式提供 next_check_date 时按 frequency 自动计算
     if data.get("next_check_date") is None and data.get("frequency"):
@@ -98,13 +89,11 @@ def create_safety_inspection(
     return obj
 
 
-@router.get("/alerts")
+@router.get("/alerts", dependencies=[Depends(require_permission("safety.view"))])
 def safety_alerts(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
     """告警：30天内到期 + 已过期（按 next_check_date 与 certificate_expiry 双维度）。"""
-    _require(db, current_user.role, "safety.view")
     now = datetime.utcnow()
     threshold = now + timedelta(days=30)
     rows = (
@@ -140,14 +129,12 @@ def safety_alerts(
     }
 
 
-@router.put("/{inspection_id}", response_model=SafetyInspectionOut)
+@router.put("/{inspection_id}", response_model=SafetyInspectionOut, dependencies=[Depends(require_permission("safety.write"))])
 def update_safety_inspection(
     inspection_id: int,
     obj_in: SafetyInspectionUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
-    _require(db, current_user.role, "safety.write")
     obj = (
         db.query(SafetyInspection)
         .filter(SafetyInspection.id == inspection_id)
@@ -166,13 +153,11 @@ def update_safety_inspection(
     return obj
 
 
-@router.delete("/{inspection_id}")
+@router.delete("/{inspection_id}", dependencies=[Depends(require_permission("safety.write"))])
 def delete_safety_inspection(
     inspection_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
-    _require(db, current_user.role, "safety.write")
     obj = (
         db.query(SafetyInspection)
         .filter(SafetyInspection.id == inspection_id)
@@ -185,7 +170,7 @@ def delete_safety_inspection(
     return {"ok": True}
 
 
-@router.post("/{inspection_id}/check", response_model=SafetyInspectionOut)
+@router.post("/{inspection_id}/check", response_model=SafetyInspectionOut, dependencies=[Depends(require_permission("safety.write"))])
 def perform_check(
     inspection_id: int,
     obj_in: SafetyInspectionCheckIn,
@@ -193,7 +178,6 @@ def perform_check(
     current_user: User = Depends(get_current_user),
 ):
     """执行检查：记录结果 + 自动按频次计算下次检查日期。"""
-    _require(db, current_user.role, "safety.write")
     obj = (
         db.query(SafetyInspection)
         .filter(SafetyInspection.id == inspection_id)

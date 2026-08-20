@@ -150,14 +150,9 @@ def change_status(
     eq.updated_at = datetime.utcnow()
     db.flush()  # 拿 log.id
 
-    # 切 DOWN → 自动派发 REPAIR 工单
+    # 切 DOWN → 自动派发 REPAIR 工单 + 联动暂停派工
     if obj_in.to_status == EquipmentStatus.DOWN:
-        # 避免同一个 open 的 DOWN 重复派单（同一台设备如有未完成的 DOWN 工单则不重复派）
-        existing = (
-            db.query(_wo_svc.WorkOrder)
-            if False else None
-        )
-        # 简单判断：该设备有无 CREATED/ASSIGNED/IN_PROGRESS/PENDING_REVIEW 且关联同一次 status_log_id/类型为 REPAIR 的工单
+        # 简单判断：该设备有无未完成的 REPAIR 工单
         from app.models import WorkOrder as _WO, WorkOrderStatus as _WOS
         _active_types = (_WOS.CREATED, _WOS.ASSIGNED, _WOS.IN_PROGRESS, _WOS.PENDING_REVIEW)
         dup = (
@@ -178,8 +173,23 @@ def change_status(
                 urgency=urgency,
                 assignee_id=None,
             )
-            # 手工构造，复用 create_work_order 的逻辑但不传 creator 不对（要传）
             _wo_svc.create_work_order(db, wo_in, operator, status_log_id=log.id)
+
+        # 联动钩子：暂停该设备上所有RUNNING的派工（无论是否创建新工单都执行）
+        try:
+            from app.models import Dispatch as _Disp, DispatchStatus as _DS
+            _running = db.query(_Disp).filter(
+                _Disp.equipment_id == equipment_id,
+                _Disp.status == _DS.RUNNING.value,
+            ).all()
+            for _d in _running:
+                _d.status = _DS.HELD.value
+                _d.held_reason = "设备DOWN机自动暂停"
+            if _running:
+                db.flush()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"联动暂停派工失败: {e}")
 
     db.commit()
     db.refresh(log)

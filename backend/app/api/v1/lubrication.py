@@ -12,6 +12,7 @@ from app.schemas import (
     LubricationRecordCreate, LubricationRecordOut,
 )
 from app.services.user_service import get_current_user
+from app.services.permission_service import require_permission
 
 router = APIRouter(prefix="/lubrication", tags=["润滑管理"])
 
@@ -52,10 +53,10 @@ def list_points(
     return q.order_by(LubricationPoint.id.asc()).offset(skip).limit(limit).all()
 
 
-@router.post("/points", response_model=LubricationPointOut)
+@router.post("/points", response_model=LubricationPointOut, dependencies=[Depends(require_permission("lubrication.write"))])
 def create_point(
     obj_in: LubricationPointCreate,
-    db: Session = Depends(get_db), _=Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """创建润滑点（五定卡）。"""
     obj = LubricationPoint(**obj_in.model_dump())
@@ -65,10 +66,10 @@ def create_point(
     return obj
 
 
-@router.put("/points/{point_id}", response_model=LubricationPointOut)
+@router.put("/points/{point_id}", response_model=LubricationPointOut, dependencies=[Depends(require_permission("lubrication.write"))])
 def update_point(
     point_id: int, obj_in: LubricationPointUpdate,
-    db: Session = Depends(get_db), _=Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """更新润滑点。"""
     obj = db.query(LubricationPoint).filter(LubricationPoint.id == point_id).first()
@@ -82,8 +83,8 @@ def update_point(
     return obj
 
 
-@router.delete("/points/{point_id}")
-def delete_point(point_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+@router.delete("/points/{point_id}", dependencies=[Depends(require_permission("lubrication.delete"))])
+def delete_point(point_id: int, db: Session = Depends(get_db)):
     """删除润滑点（级联删除其润滑记录）。"""
     obj = db.query(LubricationPoint).filter(LubricationPoint.id == point_id).first()
     if not obj:
@@ -140,7 +141,7 @@ def list_records(
     return q.order_by(LubricationRecord.lubrication_date.desc(), LubricationRecord.id.desc()).offset(skip).limit(limit).all()
 
 
-@router.post("/records", response_model=LubricationRecordOut)
+@router.post("/records", response_model=LubricationRecordOut, dependencies=[Depends(require_permission("lubrication.write"))])
 def create_record(
     obj_in: LubricationRecordCreate,
     db: Session = Depends(get_db), current_user=Depends(get_current_user),

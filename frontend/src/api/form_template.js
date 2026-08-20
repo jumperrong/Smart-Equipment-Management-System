@@ -34,7 +34,7 @@ export const uploadTemplateRefFile = (id, file) => {
 
 // 下载参考模板文件（携带 token）
 export function downloadTemplateRefFile(id, filename) {
-  const token = localStorage.getItem('token')
+  const token = localStorage.getItem('sems_token')
   return fetch(`/api/v1/form-templates/${id}/ref-file`, { headers: { Authorization: `Bearer ${token}` } })
     .then((r) => {
       if (!r.ok) throw new Error('下载参考模板失败')
@@ -76,7 +76,7 @@ export const deleteFormRecord = (id) =>
 
 // 导出：浏览器直接打开带 token 的 URL
 export function exportFormRecord(id, format = 'json') {
-  const token = localStorage.getItem('token')
+  const token = localStorage.getItem('sems_token')
   const url = `/api/v1/form-records/${id}/export/${format}`
   return fetch(url, { headers: { Authorization: `Bearer ${token}` } })
     .then(async (r) => {

@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.models import EquipmentCost, Equipment
 from app.schemas import EquipmentCostCreate, EquipmentCostOut, EquipmentCostUpdate
 from app.services.user_service import get_current_user
+from app.services.permission_service import require_permission
 
 router = APIRouter(prefix="/equipment-costs", tags=["设备成本LCC"])
 
@@ -41,7 +42,7 @@ def list_costs(
     return q.offset(skip).limit(limit).all()
 
 
-@router.post("", response_model=EquipmentCostOut)
+@router.post("", response_model=EquipmentCostOut, dependencies=[Depends(require_permission("equipment_cost.write"))])
 def create_cost(
     obj_in: EquipmentCostCreate,
     db: Session = Depends(get_db), current_user=Depends(get_current_user),
@@ -202,10 +203,10 @@ def equipment_summary(
     }
 
 
-@router.put("/{cost_id}", response_model=EquipmentCostOut)
+@router.put("/{cost_id}", response_model=EquipmentCostOut, dependencies=[Depends(require_permission("equipment_cost.write"))])
 def update_cost(
     cost_id: int, obj_in: EquipmentCostUpdate,
-    db: Session = Depends(get_db), _=Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     obj = db.query(EquipmentCost).filter(EquipmentCost.id == cost_id).first()
     if not obj:
@@ -218,8 +219,8 @@ def update_cost(
     return obj
 
 
-@router.delete("/{cost_id}")
-def delete_cost(cost_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+@router.delete("/{cost_id}", dependencies=[Depends(require_permission("equipment_cost.delete"))])
+def delete_cost(cost_id: int, db: Session = Depends(get_db)):
     obj = db.query(EquipmentCost).filter(EquipmentCost.id == cost_id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="成本记录不存在")

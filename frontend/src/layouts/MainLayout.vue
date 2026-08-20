@@ -3,7 +3,7 @@
     <el-aside :width="isCollapse ? '64px' : '220px'" class="aside">
       <div class="logo">
         <el-icon :size="22" class="logo-icon"><Cpu /></el-icon>
-        <span v-show="!isCollapse" class="logo-text">SEMS 设备管理</span>
+        <span v-show="!isCollapse" class="logo-text">SEMS · 半导体制造执行系统</span>
       </div>
       <el-menu
         :default-active="$route.path"
@@ -162,6 +162,13 @@ const MENU_GROUPS = [
     names: ['OEE', 'Quality', 'KnowledgeBase', 'EquipmentCost'],
   },
   {
+    key: 'production',
+    title: '生产管理',
+    icon: 'Operation',
+    names: ['Products', 'ProcessSections', 'Routings', 'ProductionOrders', 'Dispatches', 'LaborReports'],
+    defaultOpen: true,
+  },
+  {
     key: 'system',
     title: '系统配置',
     icon: 'Setting',
@@ -203,8 +210,8 @@ const currentTitle = computed(() => route.meta.title || '')
 
 const avatarChar = computed(() => (userStore.fullName || 'U').charAt(0).toUpperCase())
 
-const roleLabel = (r) => ({ admin: '管理员', engineer: '工程师', process_engineer: '工艺员', qa: 'QA审核员', operator: '操作员', viewer: '查看' }[r] || r)
-const roleTagType = (r) => ({ admin: 'danger', engineer: 'primary', process_engineer: 'warning', qa: 'danger', operator: 'success', viewer: 'info' }[r] || 'info')
+const roleLabel = (r) => ({ admin: '管理员', engineer: '工程师', process_engineer: '工艺员', qa: 'QA审核员', production_manager: '生产主管', team_leader: '班组长', operator: '操作员', viewer: '查看' }[r] || r)
+const roleTagType = (r) => ({ admin: 'danger', engineer: 'primary', process_engineer: 'warning', qa: 'danger', production_manager: 'primary', team_leader: 'success', operator: 'success', viewer: 'info' }[r] || 'info')
 
 function onCommand(cmd) {
   if (cmd === 'change-password') {

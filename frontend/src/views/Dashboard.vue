@@ -260,7 +260,7 @@
       </el-table>
     </el-card>
 
-    <!-- 最近工单（admin） -->
+    <!-- 最近工单（admin / production_manager） -->
     <el-card v-if="widgets.includes('recent_work_orders')" shadow="never" class="block-card">
       <template #header>
         <div class="card-header">
@@ -276,6 +276,75 @@
         <el-table-column prop="status" label="状态" width="120" />
         <el-table-column label="创建时间" width="160">
           <template #default="{ row }">{{ row.created_at ? formatTime(row.created_at) : '-' }}</template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- 今日产量汇总（生产主管 / 班组长 / admin） -->
+    <el-card v-if="widgets.includes('today_production_summary')" shadow="never" class="block-card">
+      <template #header>
+        <div class="card-header">
+          <span style="font-weight:600">🏭 今日产量汇总</span>
+          <el-tag size="small" type="success">在产 {{ summary.active_production_records || 0 }} 批次</el-tag>
+        </div>
+      </template>
+      <el-table :data="todayProductionSummary" border size="small" empty-text="今日暂无生产记录">
+        <el-table-column prop="record_no" label="记录号" width="140" />
+        <el-table-column prop="equipment_name" label="设备" width="150" />
+        <el-table-column prop="product_name" label="产品" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="batch_no" label="批次号" width="130" />
+        <el-table-column label="计划/合格" width="120" align="center">
+          <template #default="{ row }">
+            <span style="color:var(--app-text-secondary)">{{ row.plan_qty }}</span>
+            <span> / </span>
+            <span style="color:var(--el-color-success);font-weight:600">{{ row.good_qty }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="不良" width="80" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.defect_qty > 0" type="danger" size="small">{{ row.defect_qty }}</el-tag>
+            <span v-else class="muted">0</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="良率%" width="90" align="center">
+          <template #default="{ row }">
+            <span :class="{ 'alert-text': row.yield_rate < 95 }">{{ row.yield_rate }}%</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="开始时间" width="160">
+          <template #default="{ row }">{{ row.start_time ? formatTime(row.start_time) : '-' }}</template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- 我的生产记录（操作员） -->
+    <el-card v-if="widgets.includes('my_production_records')" shadow="never" class="block-card">
+      <template #header>
+        <div class="card-header">
+          <span style="font-weight:600">📋 我今日生产记录</span>
+          <el-tag size="small" type="success">{{ summary.my_today_reports || 0 }} 条</el-tag>
+        </div>
+      </template>
+      <el-table :data="myProductionRecords" border size="small" empty-text="今日暂无生产记录">
+        <el-table-column prop="record_no" label="记录号" width="140" />
+        <el-table-column prop="equipment_name" label="设备" width="150" />
+        <el-table-column prop="product_name" label="产品" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="batch_no" label="批次号" width="130" />
+        <el-table-column label="计划/合格" width="120" align="center">
+          <template #default="{ row }">
+            <span style="color:var(--app-text-secondary)">{{ row.plan_qty }}</span>
+            <span> / </span>
+            <span style="color:var(--el-color-success);font-weight:600">{{ row.good_qty }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="不良" width="80" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.defect_qty > 0" type="danger" size="small">{{ row.defect_qty }}</el-tag>
+            <span v-else class="muted">0</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="开始时间" width="160">
+          <template #default="{ row }">{{ row.start_time ? formatTime(row.start_time) : '-' }}</template>
         </el-table-column>
       </el-table>
     </el-card>
@@ -307,6 +376,8 @@ const lowStockParts = ref([])
 const safetyAlerts = ref([])
 const lubricationDue = ref([])
 const recentWorkOrders = ref([])
+const todayProductionSummary = ref([])
+const myProductionRecords = ref([])
 
 // 设备表筛选
 const filterFactory = ref(null)
@@ -366,20 +437,24 @@ function shortStatusLabel(s) {
 // 角色标识
 const roleLabel = computed(() => ({
   admin: '管理员', engineer: '设备工程师', process_engineer: '工艺工程师',
-  qa: 'QA审核员', operator: '操作员', viewer: '查看者',
+  qa: 'QA审核员', production_manager: '生产主管', team_leader: '班组长',
+  operator: '生产操作员', viewer: '查看者',
 }[userStore.role] || userStore.role || ''))
 
 const roleTagType = computed(() => ({
   admin: 'danger', engineer: 'primary', process_engineer: 'warning',
-  qa: 'danger', operator: 'success', viewer: 'info',
+  qa: 'danger', production_manager: 'primary', team_leader: 'success',
+  operator: 'success', viewer: 'info',
 }[userStore.role] || 'info'))
 
 const roleHint = computed(() => ({
-  admin: '全局视野：设备/工单/文控/备件/安全全维度',
+  admin: '全局视野：设备/工单/文控/备件/安全/生产全维度',
   engineer: '聚焦设备健康与维修执行',
   process_engineer: '聚焦工艺验证与文控审批',
   qa: '聚焦文控审核与合规告警',
-  operator: '聚焦我的点检与工单执行',
+  production_manager: '聚焦生产达成与设备开动率',
+  team_leader: '聚焦班组产量与派工执行',
+  operator: '聚焦我的生产报工与设备操作',
   viewer: '只读概览',
 }[userStore.role] || ''))
 
@@ -396,7 +471,7 @@ const kpiTiles = computed(() => {
     tiles.push(make('down', 'DOWN 机', s.down, 'tile-danger'))
     tiles.push(make('pm_ot', 'PM 超时', s.pm_overtime, 'tile-warning'))
     tiles.push(make('oee', 'OEE %', s.oee, 'tile-primary'))
-    tiles.push(make('sla', 'SLA 违约', s.sla_breached_count, 'tile-danger'))
+    tiles.push(make('sla', '超期工单', s.sla_breached_count, 'tile-danger'))
     tiles.push(make('low_stock', '低库存备件', s.low_stock_parts, 'tile-warning'))
     tiles.push(make('docs_review', '复审到期文档', s.docs_review_overdue, 'tile-warning'))
     tiles.push(make('safety', '安全检查到期', s.safety_check_due, 'tile-danger'))
@@ -404,7 +479,7 @@ const kpiTiles = computed(() => {
     tiles.push(make('down', 'DOWN 机', s.down, 'tile-danger'))
     tiles.push(make('pm', 'PM 进行中', s.pm, 'tile-success', s.pm_overtime > 0 ? `⚠ 超时 ${s.pm_overtime}` : ''))
     tiles.push(make('my_wo', '我处理中工单', s.my_open_work_orders, 'tile-warning'))
-    tiles.push(make('sla', 'SLA 违约', s.sla_breached_count, 'tile-danger'))
+    tiles.push(make('sla', '超期工单', s.sla_breached_count, 'tile-danger'))
     tiles.push(make('low_stock', '低库存备件', s.low_stock_parts, 'tile-warning'))
     tiles.push(make('lub', '润滑到期', s.lubrication_due, 'tile-warning'))
     tiles.push(make('safety', '安全检查到期', s.safety_check_due, 'tile-danger'))
@@ -421,11 +496,29 @@ const kpiTiles = computed(() => {
     tiles.push(make('form_audit', '表单待审核', s.form_records_pending_audit, 'tile-danger'))
     tiles.push(make('amend', '附加修正待审批', s.amendments_pending, 'tile-warning'))
     tiles.push(make('safety_cert', '证书到期', s.safety_certificate_expiring, 'tile-danger'))
+  } else if (role === 'production_manager') {
+    tiles.push(make('plan_qty', '今日计划', s.today_plan_qty, 'tile-info'))
+    tiles.push(make('actual_qty', '今日实际', s.today_actual_qty, 'tile-success'))
+    tiles.push(make('ach_rate', '达成率%', s.today_achievement_rate, 'tile-primary'))
+    tiles.push(make('yield_rate', '良率%', s.today_yield_rate, 'tile-success'))
+    tiles.push(make('down', 'DOWN 机', s.down, 'tile-danger'))
+    tiles.push(make('sla', '超期工单', s.sla_breached_count, 'tile-danger'))
+    tiles.push(make('active_pr', '在产批次', s.active_production_records, 'tile-warning'))
+    tiles.push(make('defect', '今日不良', s.today_defect_count, 'tile-danger'))
+  } else if (role === 'team_leader') {
+    tiles.push(make('plan_qty', '本班计划', s.today_plan_qty, 'tile-info'))
+    tiles.push(make('actual_qty', '本班实际', s.today_actual_qty, 'tile-success'))
+    tiles.push(make('yield_rate', '良率%', s.today_yield_rate, 'tile-success'))
+    tiles.push(make('my_wo', '我处理中工单', s.my_open_work_orders, 'tile-warning'))
+    tiles.push(make('sla', '超期工单', s.sla_breached_count, 'tile-danger'))
+    tiles.push(make('down', 'DOWN 机', s.down, 'tile-danger'))
+    tiles.push(make('active_pr', '在产批次', s.active_production_records, 'tile-warning'))
   } else if (role === 'operator') {
     tiles.push(make('down', 'DOWN 机', s.down, 'tile-danger'))
     tiles.push(make('pm', 'PM 进行中', s.pm, 'tile-success'))
     tiles.push(make('my_wo', '我处理中工单', s.my_open_work_orders, 'tile-warning'))
     tiles.push(make('insp', '我未完成点检', s.my_inspection_pending, 'tile-danger'))
+    tiles.push(make('my_reports', '我今日报工', s.my_today_reports, 'tile-success'))
   } else {
     // viewer
     tiles.push(make('total', '设备总数', s.total, 'tile-info'))
@@ -445,6 +538,7 @@ function onTileClick(t) {
   const routeMap = {
     open_wo: '/work-orders',
     my_open_wo: '/work-orders',
+    my_wo: '/work-orders',
     sla: '/work-orders',
     low_stock: '/spare-parts',
     safety: '/safety-inspection',
@@ -455,6 +549,14 @@ function onTileClick(t) {
     cost: '/equipment-cost',
     oee: '/oee',
     quality: '/quality',
+    plan_qty: '/oee',
+    actual_qty: '/oee',
+    ach_rate: '/oee',
+    yield_rate: '/oee',
+    defect: '/quality',
+    active_pr: '/oee',
+    my_reports: '/oee',
+    insp: '/inspection',
   }
   const route = routeMap[t.key]
   if (route) router.push(route)
@@ -480,6 +582,8 @@ async function load() {
     safetyAlerts.value = data.safety_alerts_list || []
     lubricationDue.value = data.lubrication_due_list || []
     recentWorkOrders.value = data.recent_work_orders || []
+    todayProductionSummary.value = data.today_production_summary || []
+    myProductionRecords.value = data.my_production_records || []
   } finally {
     loading.value = false
   }

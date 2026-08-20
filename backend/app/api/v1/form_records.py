@@ -129,6 +129,10 @@ def list_records(
     if production_date_to:
         try:
             dt_to = datetime.fromisoformat(production_date_to.replace("Z", ""))
+            # 仅传日期(如 2026-08-20)时 fromisoformat 解析为当天 00:00，
+            # 会漏掉当天 00:00 之后的记录；补到当天 23:59:59 兜底。
+            if len(production_date_to) == 10:
+                dt_to = dt_to.replace(hour=23, minute=59, second=59)
             q = q.filter(FormRecord.production_date <= dt_to)
         except ValueError:
             pass
@@ -452,3 +456,225 @@ def export_csv(
     # BOM 便于 Excel 打开中文不乱码
     body = ("\ufeff" + buf.getvalue()).encode("utf-8-sig")
     return StreamingResponse(io.BytesIO(body), media_type="text/csv; charset=utf-8-sig", headers=headers)
+
+
+# ============================================================
+# 导出 Excel（openpyxl，单条 + 批量）
+# ============================================================
+
+def _value_to_cell(v):
+    """将字段值转为 Excel 单元格友好类型。"""
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "是" if v else "否"
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, ensure_ascii=False)
+    return v
+
+
+@router.get(
+    "/{record_id}/export/excel",
+    dependencies=[Depends(require_permission("production.process_export"))],
+)
+def export_excel_single(
+    record_id: int,
+    db: Session = Depends(get_db),
+):
+    """单条记录导出为 Excel（沿用 CSV 的纵向布局）。"""
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        raise HTTPException(status_code=500, detail="服务端未安装 openpyxl，无法导出 Excel")
+
+    rec = db.query(FormRecord).filter(FormRecord.id == record_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="表单记录不存在")
+    tpl = get_template_or_404(db, rec.template_id)
+    fields = sorted_fields_from_template(tpl)
+    values_by_key = {v.field_key: v.field_value for v in rec.values}
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "工艺记录"
+    meta = [
+        ("表单记录ID", rec.id),
+        ("标题", rec.title),
+        ("模板", tpl.name),
+        ("状态", rec.status),
+        ("机台ID", rec.equipment_id or ""),
+        ("批号", rec.batch_no or ""),
+        ("班次", rec.shift or ""),
+        ("生产日期", (str(rec.production_date)[:10]) if rec.production_date else ""),
+        ("填写人ID", rec.filled_by or ""),
+        ("提交时间", str(rec.submitted_at) if rec.submitted_at else ""),
+        ("创建时间", str(rec.created_at)),
+    ]
+    for r_idx, (k, v) in enumerate(meta, start=1):
+        ws.cell(row=r_idx, column=1, value=k)
+        ws.cell(row=r_idx, column=2, value=v)
+    start = len(meta) + 2
+    ws.cell(row=start, column=1, value="序号")
+    ws.cell(row=start, column=2, value="字段Key")
+    ws.cell(row=start, column=3, value="字段标签")
+    ws.cell(row=start, column=4, value="字段类型")
+    ws.cell(row=start, column=5, value="单位")
+    ws.cell(row=start, column=6, value="填写值")
+    for col in range(1, 7):
+        ws.cell(row=start, column=col).font = ws.cell(row=start, column=col).font.copy(bold=True)
+    for i, f in enumerate(fields, start=1):
+        ws.cell(row=start + i, column=1, value=i)
+        ws.cell(row=start + i, column=2, value=f["key"])
+        ws.cell(row=start + i, column=3, value=f.get("label") or f["key"])
+        ws.cell(row=start + i, column=4, value=f["type"])
+        ws.cell(row=start + i, column=5, value=f.get("unit") or "")
+        ws.cell(row=start + i, column=6, value=_value_to_cell(values_by_key.get(f["key"])))
+    # 列宽自适应（粗略）
+    for col_idx, w in enumerate([8, 24, 24, 12, 10, 40], start=1):
+        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = w
+
+    if rec.remark:
+        ws.cell(row=start + len(fields) + 2, column=1, value="备注")
+        ws.cell(row=start + len(fields) + 2, column=2, value=rec.remark)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"form_record_{record_id}.xlsx"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
+@router.get(
+    "/export/excel",
+    dependencies=[Depends(require_permission("production.process_export"))],
+)
+def export_excel_bulk(
+    template_id: Optional[int] = Query(None, description="按模板筛选（推荐先选模板，列结构按模板字段展开）"),
+    equipment_id: Optional[int] = Query(None),
+    status: Optional[str] = Query(None),
+    batch_no: Optional[str] = Query(None),
+    shift: Optional[str] = Query(None),
+    production_date_from: Optional[str] = Query(None),
+    production_date_to: Optional[str] = Query(None),
+    limit: int = Query(500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """批量导出工艺记录为 Excel：每行一条记录，列 = 元信息 + 模板字段。
+
+    若 template_id 指定，则按该模板的字段 schema 展开列；
+    若未指定，则按所有记录的并集字段展开（先按 field_key 排序）。
+    """
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        raise HTTPException(status_code=500, detail="服务端未安装 openpyxl，无法导出 Excel")
+
+    q = db.query(FormRecord)
+    if template_id:
+        q = q.filter(FormRecord.template_id == template_id)
+    if equipment_id:
+        q = q.filter(FormRecord.equipment_id == equipment_id)
+    if status:
+        q = q.filter(FormRecord.status == status)
+    if batch_no:
+        q = q.filter(FormRecord.batch_no.ilike(f"%{batch_no}%"))
+    if shift:
+        q = q.filter(FormRecord.shift == shift)
+    if production_date_from:
+        try:
+            dt_from = datetime.fromisoformat(production_date_from.replace("Z", ""))
+            q = q.filter(FormRecord.production_date >= dt_from)
+        except ValueError:
+            pass
+    if production_date_to:
+        try:
+            dt_to = datetime.fromisoformat(production_date_to.replace("Z", ""))
+            # 仅传日期(如 2026-08-20)时 fromisoformat 解析为当天 00:00，
+            # 会漏掉当天 00:00 之后的记录；补到当天 23:59:59 兜底。
+            if len(production_date_to) == 10:
+                dt_to = dt_to.replace(hour=23, minute=59, second=59)
+            q = q.filter(FormRecord.production_date <= dt_to)
+        except ValueError:
+            pass
+    records = q.order_by(FormRecord.created_at.desc()).limit(limit).all()
+    if not records:
+        raise HTTPException(status_code=404, detail="按条件未匹配到任何表单记录")
+
+    # 收集字段定义
+    tpl_cache: dict[int, tuple] = {}  # tpl_id -> (tpl, sorted_fields)
+
+    def get_tpl(tpl_id: int):
+        if tpl_id not in tpl_cache:
+            tpl = db.query(FormTemplate).filter(FormTemplate.id == tpl_id).first()
+            if tpl:
+                tpl_cache[tpl_id] = (tpl, sorted_fields_from_template(tpl))
+            else:
+                tpl_cache[tpl_id] = (None, [])
+        return tpl_cache[tpl_id]
+
+    if template_id:
+        tpl, fields = get_tpl(template_id)
+        field_keys = [f["key"] for f in fields]
+        field_labels = [(f.get("label") or f["key"]) for f in fields]
+    else:
+        # 取并集
+        seen = {}
+        for r in records:
+            _, fields = get_tpl(r.template_id)
+            for f in fields:
+                seen.setdefault(f["key"], f.get("label") or f["key"])
+        field_keys = list(seen.keys())
+        field_labels = [seen[k] for k in field_keys]
+
+    meta_cols = ["记录ID", "标题", "模板", "状态", "机台ID", "机台名", "批号", "班次",
+                 "生产日期", "填写人ID", "提交时间", "创建时间"]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "工艺数据"
+    header = meta_cols + field_labels
+    for col_idx, h in enumerate(header, start=1):
+        c = ws.cell(row=1, column=col_idx, value=h)
+        c.font = c.font.copy(bold=True)
+
+    for row_idx, r in enumerate(records, start=2):
+        tpl, _ = get_tpl(r.template_id)
+        eq_name = None
+        if r.equipment_id:
+            eq = db.query(Equipment).filter(Equipment.id == r.equipment_id).first()
+            eq_name = eq.name if eq else None
+        meta_row = [
+            r.id, r.title, tpl.name if tpl else "", r.status,
+            r.equipment_id or "", eq_name or "",
+            r.batch_no or "", r.shift or "",
+            (str(r.production_date)[:10]) if r.production_date else "",
+            r.filled_by or "",
+            str(r.submitted_at) if r.submitted_at else "",
+            str(r.created_at),
+        ]
+        values_by_key = {v.field_key: v.field_value for v in r.values}
+        field_row = [_value_to_cell(values_by_key.get(k)) for k in field_keys]
+        for col_idx, v in enumerate(meta_row + field_row, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=v)
+
+    # 列宽粗调
+    from openpyxl.utils import get_column_letter
+    for col_idx in range(1, len(header) + 1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = max(12, min(40, len(header[col_idx - 1]) * 2 + 6))
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"form_records_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )

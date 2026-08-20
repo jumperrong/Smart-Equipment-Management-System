@@ -3,8 +3,8 @@
     <el-card class="login-card" shadow="hover">
       <div class="title-area">
         <el-icon :size="36" class="login-logo-icon"><Cpu /></el-icon>
-        <h2>半导体设备管理系统</h2>
-        <p class="subtitle">Semiconductor Equipment Management System</p>
+        <h2>SEMS · 半导体制造执行系统</h2>
+        <p class="subtitle">Semiconductor Manufacturing Execution System</p>
       </div>
       <el-form :model="form" :rules="rules" ref="formRef" @submit.prevent="onLogin">
         <el-form-item prop="username">

@@ -9,6 +9,7 @@ from app.schemas import (
     EquipmentLifecycleCreate, EquipmentLifecycleUpdate, EquipmentLifecycleOut,
 )
 from app.services.user_service import get_current_user
+from app.services.permission_service import require_permission
 
 router = APIRouter(prefix="/equipment-lifecycle", tags=["设备生命周期"])
 
@@ -29,7 +30,7 @@ def list_lifecycle(
     return q.order_by(EquipmentLifecycle.id.desc()).offset(skip).limit(limit).all()
 
 
-@router.post("", response_model=EquipmentLifecycleOut)
+@router.post("", response_model=EquipmentLifecycleOut, dependencies=[Depends(require_permission("equipment_lifecycle.write"))])
 def create_lifecycle(
     obj_in: EquipmentLifecycleCreate,
     db: Session = Depends(get_db), current_user=Depends(get_current_user),
@@ -42,10 +43,10 @@ def create_lifecycle(
     return obj
 
 
-@router.put("/{lifecycle_id}", response_model=EquipmentLifecycleOut)
+@router.put("/{lifecycle_id}", response_model=EquipmentLifecycleOut, dependencies=[Depends(require_permission("equipment_lifecycle.write"))])
 def update_lifecycle(
     lifecycle_id: int, obj_in: EquipmentLifecycleUpdate,
-    db: Session = Depends(get_db), _=Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """更新生命周期阶段记录。"""
     obj = db.query(EquipmentLifecycle).filter(EquipmentLifecycle.id == lifecycle_id).first()
@@ -59,8 +60,8 @@ def update_lifecycle(
     return obj
 
 
-@router.delete("/{lifecycle_id}")
-def delete_lifecycle(lifecycle_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+@router.delete("/{lifecycle_id}", dependencies=[Depends(require_permission("equipment_lifecycle.delete"))])
+def delete_lifecycle(lifecycle_id: int, db: Session = Depends(get_db)):
     """删除生命周期阶段记录。"""
     obj = db.query(EquipmentLifecycle).filter(EquipmentLifecycle.id == lifecycle_id).first()
     if not obj:

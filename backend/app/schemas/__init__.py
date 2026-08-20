@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, model_validator
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 from decimal import Decimal
 
@@ -1005,7 +1005,7 @@ class DashboardSummary(BaseModel):
     amendments_pending: int = 0         # 附加修正待审批数
     # 工单相关（admin / engineer / operator 关心）
     my_open_work_orders: int = 0       # 我处理中的工单数
-    sla_breached_count: int = 0         # SLA 违约工单数
+    sla_breached_count: int = 0         # SLA 超期工单数
     my_inspection_pending: int = 0      # 我未完成点检（演示：今日未提交点检设备数）
     # 备件 / 资源（admin / engineer 关心）
     low_stock_parts: int = 0            # 低于安全库存的备件数
@@ -1016,6 +1016,16 @@ class DashboardSummary(BaseModel):
     # 工艺相关（process_engineer 关心）
     process_validation_count: int = 0    # 工艺验证中设备数（含 ENGINEERING + PROCESS_VALIDATION）
     my_process_work_orders: int = 0      # 我提交的工单数（演示：当前用户创建的工单）
+    # 生产管理角色相关（production_manager / team_leader / operator 关心）
+    today_plan_qty: int = 0               # 今日计划产量
+    today_actual_qty: int = 0             # 今日实际产量
+    today_achievement_rate: float = 0.0   # 今日达成率(%)
+    today_yield_rate: float = 0.0          # 今日良率(%)
+    active_production_records: int = 0     # 今日在产记录数
+    my_pending_dispatches: int = 0         # 我的待办工序（操作员/班组长）
+    my_today_reports: int = 0              # 我今日已报工次数（操作员）
+    pending_wip_transfers: int = 0         # 待转序批次数（班组长）
+    today_defect_count: int = 0            # 今日缺陷总数
 
 
 class DashboardOut(BaseModel):
@@ -1034,6 +1044,9 @@ class DashboardOut(BaseModel):
     low_stock_parts_list: List[dict] = []      # 低库存备件清单
     safety_alerts_list: List[dict] = []        # 安全检查告警清单
     lubrication_due_list: List[dict] = []     # 润滑到期清单
+    # 生产管理角色附加数据
+    my_production_records: List[dict] = []    # 我的生产记录（操作员）
+    today_production_summary: List[dict] = []  # 今日各设备产量汇总（生产主管/班组长）
 
 
 
@@ -1551,7 +1564,8 @@ class SLASetRequest(BaseModel):
 
 class SLAEscalateRequest(BaseModel):
     """升级工单请求体。"""
-    escalated_to_id: int = Field(..., description="升级到的目标用户ID")
+    escalate_to_user_id: int = Field(..., description="升级到的目标用户ID")
+    remark: Optional[str] = Field(None, max_length=500, description="升级备注")
     reassign: bool = Field(True, description="是否同时把工单指派给该上级")
 
 
@@ -1808,4 +1822,709 @@ class LubricationRecordOut(LubricationRecordBase):
 
     class Config:
         from_attributes = True
+
+
+# ============ 模块 O: 生产管理 ============
+
+# ---- 工段库 ProcessSection ----
+
+class ProcessSectionCreate(BaseModel):
+    name: str = Field(..., max_length=128, description="工段名称")
+    code: Optional[str] = Field(None, max_length=64, description="工段编码(可选,便于跨环境迁移匹配)")
+    equipment_group: Optional[str] = Field(None, max_length=128, description="允许的设备组(模板层绑定)")
+    form_template_id: Optional[int] = Field(None, description="工艺数据采集字段模板(关联FormTemplate)")
+    standard_cycle_min: Optional[float] = None
+    theoretical_uph: Optional[float] = None
+    required_skill_level: Optional[str] = Field(None, max_length=32)
+    acceptance_criteria: Optional[str] = None
+    sop_doc_id: Optional[int] = None
+    description: Optional[str] = Field(None, max_length=500)
+    is_active: bool = True
+
+
+class ProcessSectionUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=128)
+    code: Optional[str] = Field(None, max_length=64)
+    equipment_group: Optional[str] = Field(None, max_length=128)
+    form_template_id: Optional[int] = None
+    standard_cycle_min: Optional[float] = None
+    theoretical_uph: Optional[float] = None
+    required_skill_level: Optional[str] = Field(None, max_length=32)
+    acceptance_criteria: Optional[str] = None
+    sop_doc_id: Optional[int] = None
+    description: Optional[str] = Field(None, max_length=500)
+    is_active: Optional[bool] = None
+
+
+class ProcessSectionOut(BaseModel):
+    id: int
+    name: str
+    code: Optional[str] = None
+    equipment_group: Optional[str] = None
+    form_template_id: Optional[int] = None
+    form_template_name: Optional[str] = None
+    standard_cycle_min: Optional[float] = None
+    theoretical_uph: Optional[float] = None
+    required_skill_level: Optional[str] = None
+    acceptance_criteria: Optional[str] = None
+    sop_doc_id: Optional[int] = None
+    description: Optional[str] = None
+    is_active: bool = True
+    created_by_id: Optional[int] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ---- 工序步骤 RoutingStep ----
+
+class RoutingStepCreate(BaseModel):
+    seq: int
+    step_name: str
+    process_section_id: Optional[int] = Field(None, description="引用的工段(可空,从工段库快速填充)")
+    standard_cycle_min: Optional[float] = None
+    theoretical_uph: Optional[float] = None
+    process_params_schema: Optional[List[Any]] = None
+    acceptance_criteria: Optional[str] = None
+    sop_doc_id: Optional[int] = None
+    param_form_template_id: Optional[int] = None
+    equipment_group: Optional[str] = None
+    required_skill_level: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class RoutingStepUpdate(BaseModel):
+    seq: Optional[int] = None
+    step_name: Optional[str] = None
+    process_section_id: Optional[int] = None
+    standard_cycle_min: Optional[float] = None
+    theoretical_uph: Optional[float] = None
+    process_params_schema: Optional[List[Any]] = None
+    acceptance_criteria: Optional[str] = None
+    sop_doc_id: Optional[int] = None
+    param_form_template_id: Optional[int] = None
+    equipment_group: Optional[str] = None
+    required_skill_level: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class RoutingStepOut(RoutingStepCreate):
+    id: int
+    routing_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ---- 工序路由 Routing ----
+
+class RoutingCreate(BaseModel):
+    product_id: int
+    version: str
+    change_reason: Optional[str] = None
+    remark: Optional[str] = None
+    steps: List[RoutingStepCreate] = []
+
+
+class RoutingUpdate(BaseModel):
+    product_id: Optional[int] = None
+    version: Optional[str] = None
+    change_reason: Optional[str] = None
+    remark: Optional[str] = None
+    steps: Optional[List[RoutingStepCreate]] = None
+
+    class Config:
+        extra = "forbid"
+
+
+class RoutingOut(BaseModel):
+    id: int
+    product_id: int
+    version: str
+    status: str
+    effective_date: Optional[datetime] = None
+    review_cycle_month: Optional[int] = None
+    next_review_date: Optional[datetime] = None
+    change_reason: Optional[str] = None
+    remark: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    steps: List[RoutingStepOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+# ---- 生产订单 ProductionOrder ----
+
+class ProductionOrderCreate(BaseModel):
+    product_id: int
+    routing_id: Optional[int] = None
+    batch_no: Optional[str] = None
+    priority: str = "NORMAL"
+    plan_qty: int = 0
+    planned_start: Optional[datetime] = None
+    planned_end: Optional[datetime] = None
+    customer_po: Optional[str] = None
+    source_type: str = "MANUAL"
+    parent_mo_id: Optional[int] = None
+    remark: Optional[str] = None
+
+
+class ProductionOrderUpdate(BaseModel):
+    product_id: Optional[int] = None
+    routing_id: Optional[int] = None
+    batch_no: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    plan_qty: Optional[int] = None
+    planned_start: Optional[datetime] = None
+    planned_end: Optional[datetime] = None
+    customer_po: Optional[str] = None
+    source_type: Optional[str] = None
+    parent_mo_id: Optional[int] = None
+    remark: Optional[str] = None
+
+
+class ProductionOrderOut(BaseModel):
+    id: int
+    mo_no: str
+    product_id: int
+    routing_id: Optional[int] = None
+    batch_no: Optional[str] = None
+    priority: Optional[str] = None
+    status: str
+    source_type: Optional[str] = None
+    parent_mo_id: Optional[int] = None
+    customer_po: Optional[str] = None
+    plan_qty: int = 0
+    input_qty: int = 0
+    completed_qty: int = 0
+    scrapped_qty: int = 0
+    planned_start: Optional[datetime] = None
+    planned_end: Optional[datetime] = None
+    actual_start: Optional[datetime] = None
+    actual_end: Optional[datetime] = None
+    created_by_name: Optional[str] = None
+    released_by_name: Optional[str] = None
+    closed_by_name: Optional[str] = None
+    remark: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    product_name: Optional[str] = None
+    dispatches_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+# ---- 派工 Dispatch ----
+
+class DispatchCreate(BaseModel):
+    mo_id: int
+    step_seq: int
+    step_name: str
+    process_section_id: Optional[int] = Field(None, description="引用的工段(执行时按工段模板采集工艺数据)")
+    equipment_id: Optional[int] = None
+    assigned_operator_id: Optional[int] = None
+    assigned_team: Optional[str] = None
+    dispatch_qty: int = 0
+    planned_start: Optional[datetime] = None
+    planned_end: Optional[datetime] = None
+    remark: Optional[str] = None
+
+
+class DispatchUpdate(BaseModel):
+    mo_id: Optional[int] = None
+    step_seq: Optional[int] = None
+    step_name: Optional[str] = None
+    process_section_id: Optional[int] = None
+    equipment_id: Optional[int] = None
+    assigned_operator_id: Optional[int] = None
+    assigned_team: Optional[str] = None
+    dispatch_qty: Optional[int] = None
+    status: Optional[str] = None
+    held_reason: Optional[str] = None
+    planned_start: Optional[datetime] = None
+    planned_end: Optional[datetime] = None
+    remark: Optional[str] = None
+
+
+class DispatchOut(BaseModel):
+    id: int
+    mo_id: int
+    step_seq: int
+    step_name: str
+    process_section_id: Optional[int] = None
+    equipment_id: Optional[int] = None
+    assigned_operator_id: Optional[int] = None
+    assigned_team: Optional[str] = None
+    dispatch_qty: int = 0
+    completed_qty: int = 0
+    scrapped_qty: int = 0
+    wip_qty: int = 0
+    status: str
+    held_reason: Optional[str] = None
+    held_work_order_id: Optional[int] = None
+    form_template_id: Optional[int] = None
+    form_record_id: Optional[int] = None
+    planned_start: Optional[datetime] = None
+    planned_end: Optional[datetime] = None
+    actual_start: Optional[datetime] = None
+    actual_end: Optional[datetime] = None
+    remark: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    equipment_name: Optional[str] = None
+    operator_name: Optional[str] = None
+    labor_reports_count: int = 0
+    process_section_name: Optional[str] = None
+    form_template_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ---- 报工 LaborReport ----
+
+class LaborReportCreate(BaseModel):
+    dispatch_id: int
+    session_start: Optional[datetime] = None
+    session_end: Optional[datetime] = None
+    input_qty: int = 0
+    good_qty: int = 0
+    defect_qty: int = 0
+    defect_detail: Optional[dict] = None
+    operator_ids: Optional[List[Any]] = None
+    man_hours: Optional[float] = None
+    form_record_id: Optional[int] = None
+    remark: Optional[str] = None
+
+
+class LaborReportUpdate(BaseModel):
+    dispatch_id: Optional[int] = None
+    session_start: Optional[datetime] = None
+    session_end: Optional[datetime] = None
+    input_qty: Optional[int] = None
+    good_qty: Optional[int] = None
+    defect_qty: Optional[int] = None
+    defect_detail: Optional[dict] = None
+    operator_ids: Optional[List[Any]] = None
+    man_hours: Optional[float] = None
+    form_record_id: Optional[int] = None
+    remark: Optional[str] = None
+
+
+class LaborReportOut(BaseModel):
+    id: int
+    dispatch_id: int
+    reporter_id: Optional[int] = None
+    reporter_name: Optional[str] = None
+    report_time: datetime
+    session_start: Optional[datetime] = None
+    session_end: Optional[datetime] = None
+    input_qty: int = 0
+    good_qty: int = 0
+    defect_qty: int = 0
+    defect_detail: Optional[dict] = None
+    operator_ids: Optional[List[Any]] = None
+    man_hours: Optional[float] = None
+    form_record_id: Optional[int] = None
+    remark: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    dispatch_no: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ---- 批次追溯 Lot / LotTransaction / Genealogy ----
+
+class LotCreate(BaseModel):
+    product_id: int
+    qty: int
+    lot_no: Optional[str] = Field(None, description="不填则自动生成 LOT-yymmdd-xxxx")
+    source_type: Optional[str] = Field("MO_OUTPUT", description="MO_OUTPUT/PURCHASE/TRANSFER/REWORK")
+    mo_id: Optional[int] = None
+    origin_dispatch_id: Optional[int] = None
+    origin_labor_report_id: Optional[int] = None
+    supplier_lot: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class LotUpdate(BaseModel):
+    qty: Optional[int] = None
+    status: Optional[str] = None
+    current_step_seq: Optional[int] = None
+    current_dispatch_id: Optional[int] = None
+    hold_reason: Optional[str] = None
+    ncr_id: Optional[int] = None
+    remark: Optional[str] = None
+
+
+class LotOut(BaseModel):
+    id: int
+    lot_no: str
+    product_id: int
+    qty: int
+    unit: Optional[str] = None
+    status: str
+    source_type: Optional[str] = None
+    mo_id: Optional[int] = None
+    origin_dispatch_id: Optional[int] = None
+    origin_labor_report_id: Optional[int] = None
+    current_step_seq: Optional[int] = None
+    current_dispatch_id: Optional[int] = None
+    hold_reason: Optional[str] = None
+    ncr_id: Optional[int] = None
+    supplier_lot: Optional[str] = None
+    remark: Optional[str] = None
+    created_by_id: Optional[int] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+    mo_no: Optional[str] = None
+    parent_lot_ids: Optional[List[int]] = None
+    child_lot_ids: Optional[List[int]] = None
+
+    class Config:
+        from_attributes = True
+
+
+class LotTransactionCreate(BaseModel):
+    lot_id: int
+    txn_type: str
+    from_step_seq: Optional[int] = None
+    to_step_seq: Optional[int] = None
+    dispatch_id: Optional[int] = None
+    labor_report_id: Optional[int] = None
+    in_qty: int = 0
+    out_qty: int = 0
+    defect_qty: int = 0
+    from_lot_id: Optional[int] = None
+    to_lot_id: Optional[int] = None
+    remark: Optional[str] = None
+
+
+class LotTransactionOut(BaseModel):
+    id: int
+    lot_id: int
+    txn_type: str
+    from_step_seq: Optional[int] = None
+    to_step_seq: Optional[int] = None
+    dispatch_id: Optional[int] = None
+    labor_report_id: Optional[int] = None
+    in_qty: int = 0
+    out_qty: int = 0
+    defect_qty: int = 0
+    from_lot_id: Optional[int] = None
+    to_lot_id: Optional[int] = None
+    operator_id: Optional[int] = None
+    operator_name: Optional[str] = None
+    txn_time: datetime
+    remark: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class LotGenealogyCreate(BaseModel):
+    parent_lot_id: int
+    child_lot_id: int
+    consume_qty: int = 0
+    conversion_ratio: Optional[float] = None
+    relation_type: Optional[str] = "PROCESS"
+    remark: Optional[str] = None
+
+
+# ---- 不合格品 NCR ----
+
+class NCRCreate(BaseModel):
+    title: Optional[str] = None
+    source_type: str = Field(..., description="LABOR_REPORT/INSPECTION/CUSTOMER_COMPLAINT")
+    source_ref_id: Optional[int] = None
+    labor_report_id: Optional[int] = None
+    dispatch_id: Optional[int] = None
+    mo_id: Optional[int] = None
+    lot_id: Optional[int] = None
+    product_id: Optional[int] = None
+    defect_code: Optional[str] = None
+    defect_description: Optional[str] = None
+    defect_qty: int = 0
+    severity: str = "MAJOR"
+    remark: Optional[str] = None
+
+
+class NCRReview(BaseModel):
+    """评审/判定"""
+    disposition: str = Field(..., description="REWORK/SCRAP/USE_AS_IS/RETURN_TO_VENDOR/PENDING")
+    severity: Optional[str] = None
+    root_cause: Optional[str] = None
+    corrective_action: Optional[str] = None
+    review_remark: Optional[str] = None
+
+
+class NCRUpdate(BaseModel):
+    title: Optional[str] = None
+    defect_code: Optional[str] = None
+    defect_description: Optional[str] = None
+    defect_qty: Optional[int] = None
+    severity: Optional[str] = None
+    status: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class NCROut(BaseModel):
+    id: int
+    ncr_no: str
+    title: Optional[str] = None
+    source_type: str
+    source_ref_id: Optional[int] = None
+    labor_report_id: Optional[int] = None
+    dispatch_id: Optional[int] = None
+    mo_id: Optional[int] = None
+    lot_id: Optional[int] = None
+    product_id: Optional[int] = None
+    defect_code: Optional[str] = None
+    defect_description: Optional[str] = None
+    defect_qty: int = 0
+    severity: str
+    status: str
+    disposition: str
+    root_cause: Optional[str] = None
+    corrective_action: Optional[str] = None
+    reviewer_id: Optional[int] = None
+    reviewer_name: Optional[str] = None
+    review_time: Optional[datetime] = None
+    review_remark: Optional[str] = None
+    closed_by_id: Optional[int] = None
+    closed_by_name: Optional[str] = None
+    closed_at: Optional[datetime] = None
+    reporter_id: Optional[int] = None
+    reporter_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    lot_no: Optional[str] = None
+    mo_no: Optional[str] = None
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ---- 首件检验 FAI ----
+
+class FAICreate(BaseModel):
+    dispatch_id: int
+    change_type: Optional[str] = Field("PRODUCT_CHANGE", description="PRODUCT_CHANGE/SHIFT_CHANGE/PROCESS_CHANGE/EQUIPMENT_CHANGE")
+    sample_qty: int = Field(1, ge=1)
+    inspection_data: Optional[List[dict]] = None
+    conclusion: Optional[str] = None
+
+
+class FAIUpdate(BaseModel):
+    change_type: Optional[str] = None
+    sample_qty: Optional[int] = None
+    inspection_data: Optional[List[dict]] = None
+    conclusion: Optional[str] = None
+
+
+class FAIReview(BaseModel):
+    """QA 签核"""
+    disposition: str = Field(..., description="APPROVED/REJECTED")
+    review_remark: Optional[str] = None
+    reject_reason: Optional[str] = None
+
+
+class FAIOut(BaseModel):
+    id: int
+    fai_no: str
+    dispatch_id: int
+    mo_id: Optional[int] = None
+    product_id: Optional[int] = None
+    equipment_id: Optional[int] = None
+    change_type: Optional[str] = None
+    sample_qty: int
+    inspection_data: Optional[List[dict]] = None
+    conclusion: Optional[str] = None
+    status: str
+    submitted_at: Optional[datetime] = None
+    submitted_by_id: Optional[int] = None
+    submitted_by_name: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    reviewed_by_id: Optional[int] = None
+    reviewed_by_name: Optional[str] = None
+    review_remark: Optional[str] = None
+    reject_reason: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    mo_no: Optional[str] = None
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+    equipment_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ---- 物料齐套 MaterialKit ----
+
+class MaterialKitItemCreate(BaseModel):
+    dispatch_id: Optional[int] = Field(None, description="单条创建时必填；bulk 接口由路径参数提供")
+    material_code: Optional[str] = None
+    material_name: str
+    spec: Optional[str] = None
+    unit: Optional[str] = None
+    required_qty: float = 0
+    available_qty: float = 0
+    is_kitted: bool = False
+    shortage_qty: Optional[float] = None
+    location: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class MaterialKitItemUpdate(BaseModel):
+    material_code: Optional[str] = None
+    material_name: Optional[str] = None
+    spec: Optional[str] = None
+    unit: Optional[str] = None
+    required_qty: Optional[float] = None
+    available_qty: Optional[float] = None
+    is_kitted: Optional[bool] = None
+    shortage_qty: Optional[float] = None
+    location: Optional[str] = None
+    remark: Optional[str] = None
+
+
+class MaterialKitItemOut(BaseModel):
+    id: int
+    dispatch_id: int
+    material_code: Optional[str] = None
+    material_name: str
+    spec: Optional[str] = None
+    unit: Optional[str] = None
+    required_qty: float
+    available_qty: float
+    is_kitted: bool
+    shortage_qty: float
+    location: Optional[str] = None
+    remark: Optional[str] = None
+    checked_at: Optional[datetime] = None
+    checked_by_id: Optional[int] = None
+    checked_by_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class KitCheckResult(BaseModel):
+    dispatch_id: int
+    total_items: int
+    kitted_items: int
+    short_items: int
+    all_kitted: bool
+    shortage_summary: List[dict] = Field(default_factory=list)
+
+
+# ---- SPC 控制图 ----
+
+class SPCChartPoint(BaseModel):
+    sample_idx: int
+    sample_no: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    values: List[float] = Field(default_factory=list)
+    mean: float
+    range: float
+    n: int
+
+
+class SPCChartOut(BaseModel):
+    field_key: str
+    field_label: Optional[str] = None
+    template_id: Optional[int] = None
+    template_name: Optional[str] = None
+    subgroup_size: int
+    points: List[SPCChartPoint]
+    xbar_cl: float
+    xbar_ucl: float
+    xbar_lcl: float
+    r_cl: float
+    r_ucl: float
+    r_lcl: float
+    spec_usl: Optional[float] = None
+    spec_lsl: Optional[float] = None
+    spec_target: Optional[float] = None
+    cp: Optional[float] = None
+    cpk: Optional[float] = None
+    mean_overall: float
+    std_overall: float
+
+
+# ---- OEE / WIP 看板 ----
+
+class EquipmentOEEOut(BaseModel):
+    equipment_id: int
+    equipment_name: Optional[str] = None
+    run_minutes: float
+    planned_minutes: float
+    good_qty: int
+    total_qty: int
+    availability: float
+    performance: float
+    quality: float
+    oee: float
+    ideal_cycle_sec: Optional[float] = None
+
+
+class WIPByStepOut(BaseModel):
+    step_seq: Optional[int] = None
+    step_name: Optional[str] = None
+    product_code: Optional[str] = None
+    wip_qty: int
+    dispatch_count: int
+
+
+class OEEWIPDashboardOut(BaseModel):
+    period_start: datetime
+    period_end: datetime
+    equipment_oee: List[EquipmentOEEOut] = Field(default_factory=list)
+    wip_by_step: List[WIPByStepOut] = Field(default_factory=list)
+    total_wip_qty: int
+    overall_oee: float
+
+
+# ---- PM 到期提醒 ----
+
+class PMReminderOut(BaseModel):
+    plan_id: int
+    equipment_id: int
+    equipment_name: Optional[str] = None
+    plan_name: str
+    cycle_days: int
+    next_due_date: Optional[datetime] = None
+    days_until_due: Optional[int] = None
+    is_overdue: bool
+    is_active: bool
+    last_executed_at: Optional[datetime] = None
+
+
+class PMReminderSummary(BaseModel):
+    overdue_count: int
+    due_in_7d_count: int
+    due_in_30d_count: int
+    total_active_plans: int
+    items: List[PMReminderOut] = Field(default_factory=list)
+
 

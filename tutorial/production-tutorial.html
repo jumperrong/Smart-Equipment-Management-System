@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SEMS 生产管理全流程教程 - 从导入产品到生产完工</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.7;
+    color: #303133;
+    background: #f5f7fa;
+    padding: 24px;
+  }
+  .container { max-width: 1200px; margin: 0 auto; background: #fff; padding: 40px; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.06); }
+  h1 { color: #1f3a5f; font-size: 30px; border-bottom: 3px solid #409eff; padding-bottom: 12px; margin-bottom: 8px; }
+  .subtitle { color: #909399; margin-bottom: 32px; font-size: 15px; }
+  h2 { color: #1f3a5f; margin-top: 40px; margin-bottom: 16px; padding-left: 12px; border-left: 4px solid #409eff; font-size: 22px; }
+  h3 { color: #303133; margin-top: 24px; margin-bottom: 12px; font-size: 17px; }
+  h4 { color: #606266; margin-top: 18px; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
+  p { margin-bottom: 12px; }
+  .meta { background: #ecf5ff; padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; border-left: 4px solid #409eff; }
+  .meta strong { color: #1f3a5f; }
+  .flow-diagram { background: #fafafa; border: 1px solid #ebeef5; padding: 24px; border-radius: 8px; margin: 24px 0; text-align: center; }
+  .flow-step { display: inline-block; padding: 10px 16px; background: #409eff; color: #fff; border-radius: 6px; margin: 4px; font-size: 13px; font-weight: 600; }
+  .flow-arrow { color: #909399; font-size: 18px; margin: 0 4px; }
+  .step-card { border: 1px solid #ebeef5; border-radius: 8px; padding: 20px 24px; margin: 24px 0; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+  .step-num { display: inline-block; background: #409eff; color: #fff; width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 50%; margin-right: 8px; font-weight: 700; }
+  .step-title { font-size: 19px; color: #1f3a5f; font-weight: 600; vertical-align: middle; }
+  .info-box { background: #f4f4f5; padding: 12px 16px; border-radius: 6px; margin: 12px 0; font-size: 14px; }
+  .info-box.success { background: #f0f9eb; border-left: 4px solid #67c23a; }
+  .info-box.warning { background: #fdf6ec; border-left: 4px solid #e6a23c; }
+  .info-box.danger { background: #fef0f0; border-left: 4px solid #f56c6c; }
+  .info-box.primary { background: #ecf5ff; border-left: 4px solid #409eff; }
+  pre { background: #2d3748; color: #e2e8f0; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 13px; line-height: 1.5; margin: 12px 0; }
+  pre .kw { color: #fbbf24; }
+  pre .str { color: #86efac; }
+  pre .cmt { color: #94a3b8; font-style: italic; }
+  pre .num { color: #fca5a5; }
+  code { background: #f4f4f5; padding: 2px 6px; border-radius: 3px; font-family: "Consolas", "Monaco", monospace; font-size: 13px; color: #c7254e; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  th { background: #409eff; color: #fff; padding: 10px; text-align: left; }
+  th:first-child { border-top-left-radius: 6px; }
+  th:last-child { border-top-right-radius: 6px; }
+  td { padding: 10px; border-bottom: 1px solid #ebeef5; }
+  tr:nth-child(even) { background: #fafafa; }
+  .state-flow { display: inline-block; padding: 4px 10px; background: #67c23a; color: #fff; border-radius: 4px; font-size: 12px; margin: 2px; }
+  .state-flow.draft { background: #909399; }
+  .state-flow.released { background: #409eff; }
+  .state-flow.progress { background: #e6a23c; }
+  .state-flow.complete { background: #67c23a; }
+  .state-flow.closed { background: #1f3a5f; }
+  .state-flow.arrow { background: transparent; color: #909399; padding: 0 4px; }
+  .field-list { list-style: none; }
+  .field-list li { padding: 6px 0; border-bottom: 1px dashed #ebeef5; }
+  .field-list li:last-child { border-bottom: none; }
+  .field-name { display: inline-block; min-width: 180px; font-family: "Consolas", monospace; color: #409eff; font-weight: 600; }
+  .field-type { display: inline-block; min-width: 100px; color: #909399; font-size: 12px; }
+  .field-desc { color: #606266; }
+  .toc { background: #f9fafc; border: 1px solid #ebeef5; border-radius: 8px; padding: 20px 24px 20px 36px; margin-bottom: 32px; }
+  .toc h3 { margin-top: 0; color: #1f3a5f; }
+  .toc ol { padding-left: 20px; }
+  .toc li { margin: 6px 0; }
+  .toc a { color: #409eff; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .scenario { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; padding: 20px 24px; border-radius: 8px; margin: 24px 0; }
+  .scenario h3 { color: #fff; margin-top: 0; }
+  .scenario p { color: rgba(255,255,255,0.9); margin-bottom: 0; }
+  .footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid #ebeef5; color: #909399; font-size: 13px; text-align: center; }
+  @media (max-width: 768px) {
+    .container { padding: 20px; }
+    body { padding: 8px; }
+    .flow-step { display: block; margin: 4px auto; }
+    .flow-arrow { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>SEMS 生产管理全流程教程</h1>
+<p class="subtitle">从导入新产品到生产完工 · 端到端实战指南 · 以半导体光刻工艺为例</p>
+
+<div class="scenario">
+  <h3>示例场景</h3>
+  <p>新品 <strong>WX-100 6寸晶圆</strong> 投产，需要经历 <strong>清洗 → 光刻 → 刻蚀 → 检测</strong> 四道工序，最终在 ASML-1400 光刻机等设备上完成 100 片的生产任务。</p>
+</div>
+
+<div class="toc">
+  <h3>目录</h3>
+  <ol>
+    <li><a href="#overview">整体流程概览</a></li>
+    <li><a href="#step1">创建产品（新品导入）</a></li>
+    <li><a href="#step2">创建表单模板（工艺数据采集字段）</a></li>
+    <li><a href="#step3">创建工段库（可复用工艺单元）</a></li>
+    <li><a href="#step4">创建工序路由并生效</a></li>
+    <li><a href="#step5">创建生产订单并下发</a></li>
+    <li><a href="#step6">派工到设备与作业员</a></li>
+    <li><a href="#step7">派工开工</a></li>
+    <li><a href="#step8">报工（合格/不良/工时）</a></li>
+    <li><a href="#step9">完工与结案</a></li>
+    <li><a href="#summary">流程总结与状态机速查</a></li>
+  </ol>
+</div>
+
+<h2 id="overview">一、整体流程概览</h2>
+
+<div class="flow-diagram">
+  <span class="flow-step">1. 创建产品</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-step">2. 表单模板</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-step">3. 工段库</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-step">4. 工序路由(生效)</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-step">5. 生产订单(下发)</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-step">6. 派工</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-step">7. 开工</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-step">8. 报工</span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-step">9. 完工结案</span>
+</div>
+
+<div class="info-box primary">
+  <strong>核心依赖链：</strong> 产品 → 工序路由(必须 EFFECTIVE) → 生产订单(必须 RELEASED) → 派工(必须 RUNNING/COMPLETED) → 报工
+</div>
+
+<h2 id="step1">二、创建产品（新品导入）</h2>
+
+<div class="step-card">
+  <p><span class="step-num">1</span><span class="step-title">产品主数据维护</span></p>
+
+  <div class="meta">
+    <strong>导航：</strong> 当前系统暂无独立 UI 入口，通过 <code>POST /api/v1/products</code> 创建<br>
+    <strong>所需权限：</strong> <code>production.product_write</code><br>
+    <strong>角色：</strong> admin / process_engineer
+  </div>
+
+  <h4>关键字段</h4>
+  <ul class="field-list">
+    <li><span class="field-name">code</span><span class="field-type">String(64)</span><span class="field-desc">产品编号（唯一），如 WX-100</span></li>
+    <li><span class="field-name">name</span><span class="field-type">String(128)</span><span class="field-desc">产品名称，如 6寸晶圆</span></li>
+    <li><span class="field-name">spec</span><span class="field-type">String(255)</span><span class="field-desc">规格型号</span></li>
+    <li><span class="field-name">unit</span><span class="field-type">String(32)</span><span class="field-desc">单位，默认"片"</span></li>
+    <li><span class="field-name">target_cycle</span><span class="field-type">Float</span><span class="field-desc">理论节拍（秒/件），用于 OEE 计算</span></li>
+    <li><span class="field-name">is_active</span><span class="field-type">Boolean</span><span class="field-desc">启用状态</span></li>
+  </ul>
+
+  <h4>API 调用示例</h4>
+  <pre><span class="cmt"># 1. 登录获取 token（admin / Admin@1234）</span>
+curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"Admin@1234"}'
+
+<span class="cmt"># 返回: {"access_token":"eyJ...","refresh_token":"..."}</span>
+<span class="cmt"># 将 token 写入变量 TOKEN</span>
+
+<span class="cmt"># 2. 创建产品 WX-100 6寸晶圆</span>
+curl -X POST http://localhost:8000/api/v1/products \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "WX-100",
+    "name": "6寸晶圆",
+    "spec": "6inch N型 (100)",
+    "unit": "片",
+    "target_cycle": 30,
+    "remark": "新品导入，光刻工艺验证",
+    "is_active": true
+  }'
+
+<span class="cmt"># 返回示例: {"id":11,"code":"WX-100","name":"6寸晶圆",...}</span>
+<span class="cmt"># 记下返回的 product_id=11</span></pre>
+
+  <div class="info-box success">
+    <strong>验收：</strong> 调用 <code>GET /api/v1/products?active_only=true</code> 能查到 WX-100；后续在工序路由、生产订单页面的产品下拉框中能看到该产品。
+  </div>
+</div>
+
+<h2 id="step2">三、创建表单模板（工艺数据采集字段）</h2>
+
+<div class="step-card">
+  <p><span class="step-num">2</span><span class="step-title">定义工艺参数采集模板</span></p>
+
+  <div class="meta">
+    <strong>导航：</strong> 工艺文控 → 表单模板管理（路由 <code>/form-templates</code>）<br>
+    <strong>所需权限：</strong> <code>form_template.manage</code><br>
+    <strong>角色：</strong> admin
+  </div>
+
+  <p>表单模板定义了"派工时自动生成哪些字段需要填写"，例如光刻工序需采集：曝光能量、焦距、显影时间等。</p>
+
+  <h4>关键字段</h4>
+  <ul class="field-list">
+    <li><span class="field-name">name</span><span class="field-type">String</span><span class="field-desc">模板名称，如"光刻工艺参数记录表"</span></li>
+    <li><span class="field-name">code</span><span class="field-type">String</span><span class="field-desc">唯一编码，如 FT-LITH-001</span></li>
+    <li><span class="field-name">category</span><span class="field-type">String</span><span class="field-desc">record(作业记录类) / guide(通用表单类)</span></li>
+    <li><span class="field-name">field_schema</span><span class="field-type">JSON</span><span class="field-desc">字段定义数组（见下）</span></li>
+    <li><span class="field-name">is_active</span><span class="field-type">Boolean</span><span class="field-desc">启用状态</span></li>
+  </ul>
+
+  <h4>field_schema 字段定义格式</h4>
+  <pre>{
+  "key": "exposure_energy",        <span class="cmt"># 唯一 key（英文+下划线）</span>
+  "type": "number",                <span class="cmt"># text/textarea/number/select/radio/date/datetime/time/boolean</span>
+  "label": "曝光能量(mJ/cm²)",      <span class="cmt"># 显示名</span>
+  "required": true,
+  "placeholder": "例 100",
+  "unit": "mJ/cm²",
+  "min": 50, "max": 200,
+  "seq": 1                          <span class="cmt"># 显示顺序</span>
+}</pre>
+
+  <h4>UI 操作（推荐）</h4>
+  <ol>
+    <li>进入「工艺文控 → 表单模板管理」</li>
+    <li>点击「新增模板」</li>
+    <li>填写名称/编码，类别选 <code>record</code></li>
+    <li>在可视化字段编辑器中添加字段：
+      <ul>
+        <li><code>exposure_energy</code> (number, 必填, 范围 50-200)</li>
+        <li><code>focus_offset</code> (number, 焦距偏移 μm)</li>
+        <li><code>develop_time</code> (number, 显影时间 秒)</li>
+        <li><code>remark</code> (textarea, 备注)</li>
+      </ul>
+    </li>
+    <li>保存模板，记下模板 ID（如 <code>template_id=5</code>）</li>
+  </ol>
+
+  <h4>API 调用示例</h4>
+  <pre>curl -X POST http://localhost:8000/api/v1/form-templates \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "光刻工艺参数记录表",
+    "code": "FT-LITH-001",
+    "category": "record",
+    "description": "光刻工序关键参数采集",
+    "is_active": true,
+    "field_schema": [
+      {"key":"exposure_energy","type":"number","label":"曝光能量(mJ/cm²)","required":true,"unit":"mJ/cm²","min":50,"max":200,"seq":1},
+      {"key":"focus_offset","type":"number","label":"焦距偏移(μm)","required":true,"unit":"μm","seq":2},
+      {"key":"develop_time","type":"number","label":"显影时间(秒)","required":true,"unit":"秒","seq":3},
+      {"key":"remark","type":"textarea","label":"备注","required":false,"seq":4}
+    ]
+  }'</pre>
+
+  <div class="info-box success">
+    <strong>验收：</strong> 模板列表可见；记下 <code>template_id</code> 供下一步工段引用。
+  </div>
+</div>
+
+<h2 id="step3">四、创建工段库（可复用工艺单元）</h2>
+
+<div class="step-card">
+  <p><span class="step-num">3</span><span class="step-title">定义工段（绑定数据采集模板）</span></p>
+
+  <div class="meta">
+    <strong>导航：</strong> 生产管理 → 工段库（路由 <code>/process-sections</code>）<br>
+    <strong>所需权限：</strong> <code>production.section_write</code><br>
+    <strong>角色：</strong> admin / process_engineer
+  </div>
+
+  <p>工段是"产品在某设备做某工艺时需要采集哪些数据"的模板化封装。一个工段可被多个产品的工序路由引用。</p>
+
+  <h4>关键字段</h4>
+  <ul class="field-list">
+    <li><span class="field-name">name</span><span class="field-type">String</span><span class="field-desc">工段名称，如"光刻工序"</span></li>
+    <li><span class="field-name">code</span><span class="field-type">String</span><span class="field-desc">唯一编码，如 PS-LITH</span></li>
+    <li><span class="field-name">equipment_group</span><span class="field-type">String</span><span class="field-desc">允许的设备组，如 LITH_GROUP</span></li>
+    <li><span class="field-name">form_template_id</span><span class="field-type">FK</span><span class="field-desc">关联上一步的表单模板</span></li>
+    <li><span class="field-name">standard_cycle_min</span><span class="field-type">Float</span><span class="field-desc">标准工时（分钟）</span></li>
+    <li><span class="field-name">theoretical_uph</span><span class="field-type">Float</span><span class="field-desc">理论每小时产出</span></li>
+    <li><span class="field-name">acceptance_criteria</span><span class="field-type">Text</span><span class="field-desc">判定标准，如 CD 偏差 ±5nm</span></li>
+  </ul>
+
+  <h4>为本场景创建 4 个工段</h4>
+  <pre><span class="cmt"># 工段 1: 清洗工序</span>
+curl -X POST http://localhost:8000/api/v1/process-sections \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"清洗工序","code":"PS-CLEAN","equipment_group":"CLEAN_GROUP","standard_cycle_min":15,"theoretical_uph":200,"description":"晶圆预清洗","is_active":true}'
+
+<span class="cmt"># 工段 2: 光刻工序（绑定 FT-LITH-001 模板）</span>
+curl -X POST http://localhost:8000/api/v1/process-sections \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "name":"光刻工序","code":"PS-LITH","equipment_group":"LITH_GROUP",
+    "form_template_id":5,
+    "standard_cycle_min":30,"theoretical_uph":120,
+    "acceptance_criteria":"CD 偏差 ±5nm，套刻精度 ≤0.2μm",
+    "description":"光刻曝光+显影","is_active":true
+  }'
+
+<span class="cmt"># 工段 3: 刻蚀工序</span>
+curl -X POST http://localhost:8000/api/v1/process-sections \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"刻蚀工序","code":"PS-ETCH","equipment_group":"ETCH_GROUP","standard_cycle_min":45,"theoretical_uph":80,"description":"干法刻蚀","is_active":true}'
+
+<span class="cmt"># 工段 4: 检测工序</span>
+curl -X POST http://localhost:8000/api/v1/process-sections \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"检测工序","code":"PS-INSPECT","equipment_group":"INSPECT_GROUP","standard_cycle_min":10,"theoretical_uph":300,"description":"CD/套刻检测","is_active":true}'</pre>
+
+  <div class="info-box success">
+    <strong>验收：</strong> 工段库列表可见 4 个工段；记下各工段 ID（如 清洗=10、光刻=11、刻蚀=12、检测=13）。
+  </div>
+</div>
+
+<h2 id="step4">五、创建工序路由并生效</h2>
+
+<div class="step-card">
+  <p><span class="step-num">4</span><span class="step-title">为产品定义工艺路线</span></p>
+
+  <div class="meta">
+    <strong>导航：</strong> 生产管理 → 工序路由（路由 <code>/routings</code>）<br>
+    <strong>所需权限：</strong> <code>production.routing_write</code><br>
+    <strong>角色：</strong> admin / process_engineer
+  </div>
+
+  <p>路由定义了产品经过哪些工序、顺序如何、各工序引用哪个工段。创建后默认为 <strong>DRAFT</strong>，必须 <strong>生效(EFFECTIVE)</strong> 后才能被生产订单引用。</p>
+
+  <h4>状态机</h4>
+  <p>
+    <span class="state-flow draft">DRAFT 草稿</span>
+    <span class="state-flow arrow">→ release →</span>
+    <span class="state-flow complete">EFFECTIVE 已生效</span>
+    <span class="state-flow arrow">→ (新版生效自动) →</span>
+    <span class="state-flow" style="background:#909399">OBSOLETE 已作废</span>
+  </p>
+
+  <h4>创建路由（含 4 道工序）</h4>
+  <pre><span class="cmt"># 产品 product_id=11，4 道工序顺序 10/20/30/40</span>
+curl -X POST http://localhost:8000/api/v1/routings \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "product_id": 11,
+    "version": "v1.0",
+    "remark": "WX-100 初版工艺路线",
+    "steps": [
+      {"seq":10,"step_name":"清洗","process_section_id":10,"standard_cycle_min":15,"equipment_group":"CLEAN_GROUP"},
+      {"seq":20,"step_name":"光刻","process_section_id":11,"standard_cycle_min":30,"equipment_group":"LITH_GROUP"},
+      {"seq":30,"step_name":"刻蚀","process_section_id":12,"standard_cycle_min":45,"equipment_group":"ETCH_GROUP"},
+      {"seq":40,"step_name":"检测","process_section_id":13,"standard_cycle_min":10,"equipment_group":"INSPECT_GROUP"}
+    ]
+  }'
+
+<span class="cmt"># 返回 routing_id，例如 5</span>
+
+<span class="cmt"># 让路由生效（DRAFT → EFFECTIVE）</span>
+curl -X POST http://localhost:8000/api/v1/routings/5/release \
+  -H "Authorization: Bearer $TOKEN"</pre>
+
+  <div class="info-box warning">
+    <strong>关键约束：</strong>
+    <ul>
+      <li>生产订单创建时引用的 routing 必须 <strong>EFFECTIVE</strong>，否则报错</li>
+      <li>生效后不可再编辑/删除</li>
+      <li>同产品同时只能有一个 EFFECTIVE 版本，新版本生效自动作废旧版</li>
+    </ul>
+  </div>
+
+  <div class="info-box success">
+    <strong>验收：</strong> 路由列表中 v1.0 状态为「已生效」；行点击可查看 4 道工序详情。
+  </div>
+</div>
+
+<h2 id="step5">六、创建生产订单并下发</h2>
+
+<div class="step-card">
+  <p><span class="step-num">5</span><span class="step-title">下达生产计划</span></p>
+
+  <div class="meta">
+    <strong>导航：</strong> 生产管理 → 生产订单（路由 <code>/production-orders</code>）<br>
+    <strong>所需权限：</strong> <code>production.mo_manage</code><br>
+    <strong>角色：</strong> admin / production_manager
+  </div>
+
+  <h4>状态机</h4>
+  <p>
+    <span class="state-flow draft">DRAFT 草稿</span>
+    <span class="state-flow arrow">→</span>
+    <span class="state-flow released">RELEASED 已下发</span>
+    <span class="state-flow arrow">→</span>
+    <span class="state-flow progress">IN_PROGRESS 执行中</span>
+    <span class="state-flow arrow">→</span>
+    <span class="state-flow complete">COMPLETED 已完工</span>
+    <span class="state-flow arrow">→</span>
+    <span class="state-flow closed">CLOSED 已结案</span>
+  </p>
+
+  <h4>关键字段</h4>
+  <ul class="field-list">
+    <li><span class="field-name">product_id</span><span class="field-type">FK</span><span class="field-desc">产品（WX-100 → 11）</span></li>
+    <li><span class="field-name">routing_id</span><span class="field-type">FK</span><span class="field-desc">工序路由（必须 EFFECTIVE）</span></li>
+    <li><span class="field-name">batch_no</span><span class="field-type">String</span><span class="field-desc">批次号，如 B20260819-01</span></li>
+    <li><span class="field-name">plan_qty</span><span class="field-type">Integer</span><span class="field-desc">计划数量，如 100</span></li>
+    <li><span class="field-name">priority</span><span class="field-type">String</span><span class="field-desc">HIGH/NORMAL/LOW</span></li>
+    <li><span class="field-name">planned_start/end</span><span class="field-type">DateTime</span><span class="field-desc">计划起止时间</span></li>
+  </ul>
+
+  <h4>创建订单</h4>
+  <pre><span class="cmt"># 1. 创建 MO（默认 DRAFT）</span>
+curl -X POST http://localhost:8000/api/v1/production-orders \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "product_id": 11,
+    "routing_id": 5,
+    "batch_no": "B20260819-01",
+    "priority": "HIGH",
+    "plan_qty": 100,
+    "planned_start": "2026-08-19T08:00:00",
+    "planned_end": "2026-08-19T20:00:00"
+  }'
+
+<span class="cmt"># 返回示例: {"id":7,"mo_no":"MO-20260819-0007","status":"DRAFT",...}</span>
+
+<span class="cmt"># 2. 下发（DRAFT → RELEASED）</span>
+curl -X PUT http://localhost:8000/api/v1/production-orders/7 \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"status":"RELEASED"}'</pre>
+
+  <div class="info-box warning">
+    <strong>关键约束：</strong>
+    <ul>
+      <li>草稿状态（DRAFT）<strong>不能派工</strong>，必须先「下发」</li>
+      <li>routing_id 必须指向 EFFECTIVE 路由</li>
+      <li>mo_no 自动生成：<code>MO-YYYYMMDD-NNNN</code></li>
+    </ul>
+  </div>
+
+  <div class="info-box success">
+    <strong>验收：</strong> 订单列表中可见 MO-20260819-0007，状态「已下发」；行点击可查看订单详情抽屉。
+  </div>
+</div>
+
+<h2 id="step6">七、派工到设备与作业员</h2>
+
+<div class="step-card">
+  <p><span class="step-num">6</span><span class="step-title">为每道工序创建派工单</span></p>
+
+  <div class="meta">
+    <strong>导航：</strong> 生产管理 → 派工管理（路由 <code>/dispatches</code>）<br>
+    <strong>所需权限：</strong> <code>production.dispatch_assign</code><br>
+    <strong>角色：</strong> admin / production_manager / team_leader
+  </div>
+
+  <p>派工是连接"计划"与"执行"的桥梁。每个派工对应 MO 的一道工序，可指定具体设备和作业员。<strong>派工创建时会自动按工段关联的表单模板初始化一份空白工艺数据表单</strong>。</p>
+
+  <h4>关键字段</h4>
+  <ul class="field-list">
+    <li><span class="field-name">mo_id</span><span class="field-type">FK</span><span class="field-desc">生产订单（必须非 DRAFT）</span></li>
+    <li><span class="field-name">step_seq / step_name</span><span class="field-type">Int/String</span><span class="field-desc">工序序号/名称（与路由步骤对应）</span></li>
+    <li><span class="field-name">equipment_id</span><span class="field-type">FK</span><span class="field-desc">派到哪台设备</span></li>
+    <li><span class="field-name">assigned_operator_id</span><span class="field-type">FK</span><span class="field-desc">作业员</span></li>
+    <li><span class="field-name">dispatch_qty</span><span class="field-type">Integer</span><span class="field-desc">派工数量</span></li>
+    <li><span class="field-name">process_section_id</span><span class="field-type">FK</span><span class="field-desc">引用工段（自动解析表单模板）</span></li>
+  </ul>
+
+  <h4>状态机</h4>
+  <p>
+    <span class="state-flow draft">QUEUED 排队</span>
+    <span class="state-flow arrow">→</span>
+    <span class="state-flow released">ASSIGNED 已分配</span>
+    <span class="state-flow arrow">→</span>
+    <span class="state-flow progress">RUNNING 执行中</span>
+    <span class="state-flow arrow">→</span>
+    <span class="state-flow complete">COMPLETED 已完工</span>
+  </p>
+
+  <h4>为 4 道工序分别派工</h4>
+  <pre><span class="cmt"># 派工 1: 清洗工序 (序号 10)，派到 DNS-3000 清洗机</span>
+curl -X POST http://localhost:8000/api/v1/dispatches \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "mo_id": 7, "step_seq": 10, "step_name": "清洗",
+    "process_section_id": 10,
+    "equipment_id": 4,
+    "assigned_operator_id": 8,
+    "dispatch_qty": 100
+  }'
+
+<span class="cmt"># 派工 2: 光刻工序 (序号 20)，派到 ASML-1400 光刻机</span>
+curl -X POST http://localhost:8000/api/v1/dispatches \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "mo_id": 7, "step_seq": 20, "step_name": "光刻",
+    "process_section_id": 11,
+    "equipment_id": 2,
+    "assigned_operator_id": 8,
+    "dispatch_qty": 100
+  }'
+
+<span class="cmt"># 派工 3/4 类似，分别派到刻蚀机、检测设备</span>
+<span class="cmt"># 系统会自动为每个派工创建空白 FormRecord（按工段绑定的模板）</span></pre>
+
+  <div class="info-box primary">
+    <strong>自动行为：</strong>
+    <ul>
+      <li>派工时按工段 <code>form_template_id</code> 自动初始化一份草稿 FormRecord</li>
+      <li>表单标题自动生成：<code>派工#{id} · {工序名} · {模板名}</code></li>
+      <li>模板停用时不阻断派工，仅跳过初始化</li>
+    </ul>
+  </div>
+
+  <div class="info-box success">
+    <strong>验收：</strong> 派工列表可见 4 条派工记录，状态「已排队」；行点击可查看派工详情抽屉；点击 MO 号可跳转订单详情。
+  </div>
+</div>
+
+<h2 id="step7">八、派工开工</h2>
+
+<div class="step-card">
+  <p><span class="step-num">7</span><span class="step-title">将派工转为执行中</span></p>
+
+  <div class="meta">
+    <strong>导航：</strong> 生产管理 → 派工管理 → 操作列「开工」按钮<br>
+    <strong>所需权限：</strong> <code>production.dispatch_assign</code>
+  </div>
+
+  <p>开工将派工从 <strong>ASSIGNED → RUNNING</strong>，<strong>同时自动将所属 MO 从 RELEASED 联动为 IN_PROGRESS</strong>。</p>
+
+  <h4>UI 操作</h4>
+  <ol>
+    <li>进入派工管理页面</li>
+    <li>找到状态为「已分配」的派工行</li>
+    <li>点击操作列的「开工」按钮</li>
+    <li>确认弹窗后，状态变为「执行中」</li>
+  </ol>
+
+  <h4>API 调用</h4>
+  <pre><span class="cmt"># 派工 QUEUED → ASSIGNED（分配设备和作业员后）</span>
+curl -X PUT http://localhost:8000/api/v1/dispatches/{dispatch_id} \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"status":"ASSIGNED","equipment_id":2,"assigned_operator_id":8}'
+
+<span class="cmt"># 派工 ASSIGNED → RUNNING（开工）</span>
+curl -X PUT http://localhost:8000/api/v1/dispatches/{dispatch_id} \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"status":"RUNNING"}'</pre>
+
+  <div class="info-box primary">
+    <strong>自动副作用：</strong>
+    <ul>
+      <li>派工自动写入 <code>actual_start</code>（实际开始时间）</li>
+      <li>若 MO 为 RELEASED，自动联动转为 <strong>IN_PROGRESS</strong> 并写 MO.actual_start</li>
+      <li>RUNNING 状态下可「暂停」(HELD) 或「完工」(COMPLETED)</li>
+    </ul>
+  </div>
+
+  <div class="info-box warning">
+    <strong>暂停与恢复：</strong> 设备 DOWN 机时系统自动将所有 RUNNING 派工转为 HELD 并关联维修工单；恢复后可继续 RUNNING。
+  </div>
+</div>
+
+<h2 id="step8">九、报工（合格/不良/工时）</h2>
+
+<div class="step-card">
+  <p><span class="step-num">8</span><span class="step-title">逐工序提交报工记录</span></p>
+
+  <div class="meta">
+    <strong>导航：</strong> 生产管理 → 报工记录（路由 <code>/labor-reports</code>）<br>
+    <strong>所需权限：</strong> <code>production.labor_report</code>（报工）、<code>production.labor_correct</code>（修正/删除）<br>
+    <strong>角色：</strong> admin / team_leader / operator
+  </div>
+
+  <p>报工是生产执行的最终数据采集点。<strong>一次派工可多次报工（累加）</strong>，每次报工自动联动更新派工和 MO 的数量，<strong>当完工+报废达到计划量时 MO 自动转为 COMPLETED</strong>。</p>
+
+  <h4>关键字段</h4>
+  <ul class="field-list">
+    <li><span class="field-name">dispatch_id</span><span class="field-type">FK</span><span class="field-desc">派工单（必须 RUNNING/COMPLETED）</span></li>
+    <li><span class="field-name">input_qty</span><span class="field-type">Integer</span><span class="field-desc">本次投入数量</span></li>
+    <li><span class="field-name">good_qty</span><span class="field-type">Integer</span><span class="field-desc">合格数量</span></li>
+    <li><span class="field-name">defect_qty</span><span class="field-type">Integer</span><span class="field-desc">不良数量</span></li>
+    <li><span class="field-name">session_start/end</span><span class="field-type">DateTime</span><span class="field-desc">作业时段起止</span></li>
+    <li><span class="field-name">man_hours</span><span class="field-type">Float</span><span class="field-desc">人×小时</span></li>
+    <li><span class="field-name">defect_detail</span><span class="field-type">JSON</span><span class="field-desc">按缺陷码分拆，如 {"划伤":2,"异物":1}</span></li>
+  </ul>
+
+  <h4>报工示例（光刻工序完成 100 片，95 合格 5 不良）</h4>
+  <pre><span class="cmt"># 报工（一次报 100 片）</span>
+curl -X POST http://localhost:8000/api/v1/labor-reports \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "dispatch_id": 18,
+    "session_start": "2026-08-19T10:00:00",
+    "session_end": "2026-08-19T14:00:00",
+    "input_qty": 100,
+    "good_qty": 95,
+    "defect_qty": 5,
+    "defect_detail": {"划伤":2,"异物":2,"颗粒":1},
+    "man_hours": 4.0,
+    "remark": "光刻完成，5 片不良已隔离"
+  }'</pre>
+
+  <div class="info-box primary">
+    <strong>报工联动逻辑：</strong>
+    <ol>
+      <li>派工 <code>completed_qty += good_qty</code>（95）</li>
+      <li>派工 <code>scrapped_qty += defect_qty</code>（5）</li>
+      <li>派工 <code>wip_qty = max(0, dispatch_qty - completed - scrapped)</code></li>
+      <li>MO 同步累加 completed_qty / scrapped_qty / input_qty</li>
+      <li><strong>若 completed_qty + scrapped_qty ≥ plan_qty</strong> 且 MO 为 IN_PROGRESS，自动转 <strong>COMPLETED</strong> 并写 actual_end</li>
+      <li>自动创建 ProductionRecord（编号 LR-000001），用于 OEE 看板分析</li>
+    </ol>
+  </div>
+
+  <h4>UI 操作</h4>
+  <ol>
+    <li>进入报工记录页面</li>
+    <li>点击「新增报工」</li>
+    <li>选择派工单（下拉显示 #id 工序号 工序名）</li>
+    <li>填写作业起止时间、投入/合格/不良数量、人时</li>
+    <li>点击「提交」，系统弹窗显示摘要确认</li>
+    <li>确认后报工记录创建，派工和 MO 数量自动更新</li>
+  </ol>
+
+  <div class="info-box success">
+    <strong>验收：</strong> 报工列表可见记录；行点击可查看报工详情抽屉；点击派工号可跳转派工详情。
+  </div>
+</div>
+
+<h2 id="step9">十、完工与结案</h2>
+
+<div class="step-card">
+  <p><span class="step-num">9</span><span class="step-title">MO 完工与结案闭环</span></p>
+
+  <div class="meta">
+    <strong>导航：</strong> 生产管理 → 生产订单<br>
+    <strong>所需权限：</strong> <code>production.mo_manage</code>
+  </div>
+
+  <h4>完工阶段</h4>
+  <p>当所有工序报工完成、MO 的 <code>completed_qty + scrapped_qty ≥ plan_qty</code> 时，系统<strong>自动</strong>将 MO 从 IN_PROGRESS 转为 <strong>COMPLETED</strong> 并写入 <code>actual_end</code>。</p>
+
+  <p>也可手动触发：</p>
+  <pre>curl -X PUT http://localhost:8000/api/v1/production-orders/7 \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"status":"COMPLETED"}'</pre>
+
+  <h4>结案阶段</h4>
+  <p>完工后的 MO 进入待结案状态，由生产经理执行结案（COMPLETED → CLOSED），写入 <code>closed_by</code>。</p>
+  <pre>curl -X PUT http://localhost:8000/api/v1/production-orders/7 \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"status":"CLOSED"}'</pre>
+
+  <div class="info-box success">
+    <strong>结案后状态：</strong>
+    <ul>
+      <li>MO 状态变为「已结案」</li>
+      <li>所有派工应为 COMPLETED 状态</li>
+      <li>报工记录已锁定，不可再修正</li>
+      <li>关联的 FormRecord 已审核归档</li>
+      <li>生产数据已进入 OEE 看板统计</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="summary">十一、流程总结与状态机速查</h2>
+
+<h3>端到端状态流转图</h3>
+<table>
+  <tr>
+    <th>阶段</th>
+    <th>对象</th>
+    <th>初始状态</th>
+    <th>过程状态</th>
+    <th>终态</th>
+  </tr>
+  <tr>
+    <td>1. 产品</td>
+    <td>Product</td>
+    <td>is_active=true</td>
+    <td>-</td>
+    <td>is_active=true</td>
+  </tr>
+  <tr>
+    <td>2. 模板</td>
+    <td>FormTemplate</td>
+    <td>is_active=true</td>
+    <td>-</td>
+    <td>is_active=true</td>
+  </tr>
+  <tr>
+    <td>3. 工段</td>
+    <td>ProcessSection</td>
+    <td>is_active=true</td>
+    <td>-</td>
+    <td>is_active=true</td>
+  </tr>
+  <tr>
+    <td>4. 路由</td>
+    <td>Routing</td>
+    <td>DRAFT</td>
+    <td>release → EFFECTIVE</td>
+    <td>EFFECTIVE</td>
+  </tr>
+  <tr>
+    <td>5. 订单</td>
+    <td>ProductionOrder</td>
+    <td>DRAFT</td>
+    <td>RELEASED → IN_PROGRESS → COMPLETED</td>
+    <td>CLOSED</td>
+  </tr>
+  <tr>
+    <td>6. 派工</td>
+    <td>Dispatch</td>
+    <td>QUEUED</td>
+    <td>ASSIGNED → RUNNING → COMPLETED</td>
+    <td>COMPLETED</td>
+  </tr>
+  <tr>
+    <td>7. 报工</td>
+    <td>LaborReport</td>
+    <td>创建即终态</td>
+    <td>累加联动派工/MO 数量</td>
+    <td>触发 MO 自动 COMPLETED</td>
+  </tr>
+</table>
+
+<h3>关键自动联动一览</h3>
+<table>
+  <tr>
+    <th>触发动作</th>
+    <th>自动副作用</th>
+  </tr>
+  <tr>
+    <td>派工开工 (ASSIGNED→RUNNING)</td>
+    <td>写 actual_start；若 MO=RELEASED 自动转 IN_PROGRESS 并写 MO.actual_start</td>
+  </tr>
+  <tr>
+    <td>派工完工 (RUNNING→COMPLETED)</td>
+    <td>写 actual_end</td>
+  </tr>
+  <tr>
+    <td>报工创建</td>
+    <td>派工/MO 数量累加；满量自动 MO→COMPLETED；自动创建 ProductionRecord 入 OEE</td>
+  </tr>
+  <tr>
+    <td>路由生效 (DRAFT→EFFECTIVE)</td>
+    <td>写 effective_date、next_review_date(+1年)；同产品旧 EFFECTIVE 自动转 OBSOLETE</td>
+  </tr>
+  <tr>
+    <td>设备 DOWN 机</td>
+    <td>该设备所有 RUNNING 派工自动转 HELD 并关联维修工单</td>
+  </tr>
+</table>
+
+<h3>关键路由路径速查</h3>
+<table>
+  <tr>
+    <th>模块</th>
+    <th>前端路由</th>
+    <th>API 前缀</th>
+    <th>角色</th>
+  </tr>
+  <tr><td>表单模板</td><td>/form-templates</td><td>/api/v1/form-templates</td><td>admin</td></tr>
+  <tr><td>产品管理</td><td><em>无 UI（仅 API）</em></td><td>/api/v1/products</td><td>admin/process_engineer</td></tr>
+  <tr><td>工段库</td><td>/process-sections</td><td>/api/v1/process-sections</td><td>admin/process_engineer</td></tr>
+  <tr><td>工序路由</td><td>/routings</td><td>/api/v1/routings</td><td>admin/process_engineer</td></tr>
+  <tr><td>生产订单</td><td>/production-orders</td><td>/api/v1/production-orders</td><td>admin/production_manager</td></tr>
+  <tr><td>派工管理</td><td>/dispatches</td><td>/api/v1/dispatches</td><td>admin/production_manager/team_leader</td></tr>
+  <tr><td>报工记录</td><td>/labor-reports</td><td>/api/v1/labor-reports</td><td>admin/team_leader/operator</td></tr>
+</table>
+
+<div class="info-box primary">
+  <strong>核心约束总结：</strong>
+  <ol>
+    <li>产品 → 路由 → 订单 → 派工 → 报工，<strong>必须按序创建</strong></li>
+    <li>路由必须 <strong>EFFECTIVE</strong> 才能被 MO 引用</li>
+    <li>MO 必须 <strong>RELEASED</strong> 才能派工</li>
+    <li>派工必须 <strong>RUNNING/COMPLETED</strong> 才能报工</li>
+    <li>报工满量自动触发 MO 完工</li>
+  </ol>
+</div>
+
+<div class="footer">
+  SEMS 半导体设备管理系统 · 生产管理全流程教程<br>
+  基于系统当前实现版本 · 示例数据：WX-100 6寸晶圆 · 100片 · 光刻工艺
+</div>
+
+</div>
+</body>
+</html>

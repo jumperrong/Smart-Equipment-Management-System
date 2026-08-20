@@ -191,8 +191,19 @@ async def lifespan(app: FastAPI):
     _boot_security_checks()
     init_db()
     backup_scheduler.start_scheduler()
+    # PM 到期提醒扫描调度器（每天 8:00 扫描 7 天内到期计划写审计日志）
+    try:
+        from app.services import pm_reminder_service
+        pm_reminder_service.start_pm_reminder_scheduler()
+    except Exception as e:
+        print(f"[SEMS] PM 提醒调度器启动失败（非致命）: {e}")
     yield
     backup_scheduler.stop_scheduler()
+    try:
+        from app.services import pm_reminder_service
+        pm_reminder_service.stop_pm_reminder_scheduler()
+    except Exception:
+        pass
 
 
 def _get_client_ip(request: Request) -> str:

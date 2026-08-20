@@ -52,6 +52,72 @@ def delete_product(db: Session, pid: int):
     db.commit()
 
 
+def batch_import_products(db: Session, rows: list[dict]) -> dict:
+    """批量导入产品。
+
+    入参 rows 为字典列表，每个字典支持字段：
+      code*, name*, spec, unit, target_cycle, remark, is_active
+    - 必填字段缺失直接跳过并计入 failed
+    - code 重复（DB 已存在或本次批次内重复）跳过
+    - is_active 接受 'true'/'false'/'1'/'0'/True/False
+    - target_cycle 接受数字字符串
+
+    返回：{ok: int, failed: int, errors: [{row, reason}]}
+    """
+    seen_codes = set()
+    # 预取已有 code，避免逐行查询
+    existing = {c for (c,) in db.query(Product.code).all()}
+
+    ok = 0
+    failed = 0
+    errors = []
+
+    for idx, r in enumerate(rows, start=1):
+        code = (r.get("code") or r.get("产品编号") or "").strip() if isinstance(r.get("code") or r.get("产品编号"), str) else (r.get("code") or r.get("产品编号"))
+        name = (r.get("name") or r.get("产品名称") or "").strip() if isinstance(r.get("name") or r.get("产品名称"), str) else (r.get("name") or r.get("产品名称"))
+        if not code or not name:
+            failed += 1
+            errors.append({"row": idx, "reason": "code/name 必填"})
+            continue
+        if code in existing or code in seen_codes:
+            failed += 1
+            errors.append({"row": idx, "reason": f"产品编号 {code} 已存在"})
+            continue
+
+        def _to_float(v):
+            if v in (None, "", "-"):
+                return None
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
+        def _to_bool(v):
+            if isinstance(v, bool):
+                return v
+            if v in (None, ""):
+                return True
+            s = str(v).strip().lower()
+            return s not in ("0", "false", "否", "停用")
+
+        obj = Product(
+            code=code,
+            name=name,
+            spec=(r.get("spec") or r.get("规格型号") or None) or None,
+            unit=(r.get("unit") or r.get("单位") or "片") or "片",
+            target_cycle=_to_float(r.get("target_cycle") or r.get("理论节拍")),
+            remark=(r.get("remark") or r.get("备注") or None) or None,
+            is_active=_to_bool(r.get("is_active") if "is_active" in r else r.get("启用", True)),
+        )
+        db.add(obj)
+        seen_codes.add(code)
+        ok += 1
+
+    if ok:
+        db.commit()
+    return {"ok": ok, "failed": failed, "errors": errors}
+
+
 # ---------- ProductionRecord ----------
 
 def _gen_record_no(db: Session) -> str:

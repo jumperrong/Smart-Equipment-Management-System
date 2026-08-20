@@ -304,7 +304,11 @@ def list_distributions(
 
 # ==================== 7) POST /distributions/return-batch ====================
 
-@router.post("/distributions/return-batch", response_model=List[DocumentDistributionOut])
+@router.post(
+    "/distributions/return-batch",
+    response_model=List[DocumentDistributionOut],
+    dependencies=[Depends(require_permission("process_doc.approve"))],
+)
 def return_distributions_batch(
     payload: DocumentDistributionReturn,
     db: Session = Depends(get_db),

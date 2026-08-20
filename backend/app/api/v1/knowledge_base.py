@@ -11,6 +11,7 @@ from app.schemas import (
     KnowledgeFromWorkOrder, KnowledgeFromD8,
 )
 from app.services.user_service import get_current_user
+from app.services.permission_service import require_permission
 
 router = APIRouter(prefix="/knowledge", tags=["故障知识库"])
 
@@ -19,14 +20,14 @@ def _user_display_name(user) -> str:
     return user.full_name or user.username
 
 
-@router.get("", response_model=list[KnowledgeEntryOut])
+@router.get("", response_model=list[KnowledgeEntryOut], dependencies=[Depends(require_permission("knowledge.view"))])
 def list_entries(
     keyword: Optional[str] = None,
     fault_category: Optional[str] = None,
     equipment_id: Optional[int] = None,
     status: Optional[str] = None,
     skip: int = 0, limit: int = 100,
-    db: Session = Depends(get_db), _=Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """知识库列表，支持关键字搜索 title/symptom/root_cause/solution，
     以及按 fault_category / equipment_id / status 过滤。"""
@@ -51,7 +52,7 @@ def list_entries(
     return q.offset(skip).limit(limit).all()
 
 
-@router.post("", response_model=KnowledgeEntryOut)
+@router.post("", response_model=KnowledgeEntryOut, dependencies=[Depends(require_permission("knowledge.write"))])
 def create_entry(
     obj_in: KnowledgeEntryCreate,
     db: Session = Depends(get_db), current_user=Depends(get_current_user),
@@ -67,7 +68,7 @@ def create_entry(
     return obj
 
 
-@router.post("/from-work-order/{work_order_id}", response_model=KnowledgeEntryOut)
+@router.post("/from-work-order/{work_order_id}", response_model=KnowledgeEntryOut, dependencies=[Depends(require_permission("knowledge.write"))])
 def from_work_order(
     work_order_id: int,
     payload: Optional[KnowledgeFromWorkOrder] = None,
@@ -108,7 +109,7 @@ def from_work_order(
     return obj
 
 
-@router.post("/from-d8/{d8_id}", response_model=KnowledgeEntryOut)
+@router.post("/from-d8/{d8_id}", response_model=KnowledgeEntryOut, dependencies=[Depends(require_permission("knowledge.write"))])
 def from_d8_report(
     d8_id: int,
     payload: Optional[KnowledgeFromD8] = None,
@@ -156,11 +157,11 @@ def from_d8_report(
     return obj
 
 
-@router.get("/search", response_model=list[KnowledgeEntryOut])
+@router.get("/search", response_model=list[KnowledgeEntryOut], dependencies=[Depends(require_permission("knowledge.view"))])
 def search_entries(
     q: str = Query(..., description="全文检索关键字: title/symptom/root_cause/solution/tags"),
     skip: int = 0, limit: int = 100,
-    db: Session = Depends(get_db), _=Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """全文检索：在 title/symptom/root_cause/solution/tags 上模糊匹配。"""
     like = f"%{q}%"
@@ -183,12 +184,12 @@ def search_entries(
     return rows
 
 
-@router.get("/similar", response_model=list[KnowledgeEntryOut])
+@router.get("/similar", response_model=list[KnowledgeEntryOut], dependencies=[Depends(require_permission("knowledge.view"))])
 def similar_entries(
     equipment_id: Optional[int] = None,
     fault_category: Optional[str] = None,
     skip: int = 0, limit: int = 20,
-    db: Session = Depends(get_db), _=Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """相似案例推荐：按 equipment_id 和/或 fault_category 匹配，
     优先返回同设备同分类，其次同设备或同分类，按复发次数/浏览量倒序。"""
@@ -235,8 +236,8 @@ def similar_entries(
     )
 
 
-@router.get("/{entry_id}", response_model=KnowledgeEntryOut)
-def get_entry(entry_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+@router.get("/{entry_id}", response_model=KnowledgeEntryOut, dependencies=[Depends(require_permission("knowledge.view"))])
+def get_entry(entry_id: int, db: Session = Depends(get_db)):
     """知识详情，浏览量 +1。"""
     obj = db.query(KnowledgeEntry).filter(KnowledgeEntry.id == entry_id).first()
     if not obj:
@@ -247,10 +248,10 @@ def get_entry(entry_id: int, db: Session = Depends(get_db), _=Depends(get_curren
     return obj
 
 
-@router.put("/{entry_id}", response_model=KnowledgeEntryOut)
+@router.put("/{entry_id}", response_model=KnowledgeEntryOut, dependencies=[Depends(require_permission("knowledge.write"))])
 def update_entry(
     entry_id: int, obj_in: KnowledgeEntryUpdate,
-    db: Session = Depends(get_db), _=Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     obj = db.query(KnowledgeEntry).filter(KnowledgeEntry.id == entry_id).first()
     if not obj:
@@ -263,8 +264,8 @@ def update_entry(
     return obj
 
 
-@router.delete("/{entry_id}")
-def delete_entry(entry_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+@router.delete("/{entry_id}", dependencies=[Depends(require_permission("knowledge.delete"))])
+def delete_entry(entry_id: int, db: Session = Depends(get_db)):
     obj = db.query(KnowledgeEntry).filter(KnowledgeEntry.id == entry_id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="知识条目不存在")
@@ -273,8 +274,8 @@ def delete_entry(entry_id: int, db: Session = Depends(get_db), _=Depends(get_cur
     return {"ok": True}
 
 
-@router.post("/{entry_id}/recurrence", response_model=KnowledgeEntryOut)
-def mark_recurrence(entry_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+@router.post("/{entry_id}/recurrence", response_model=KnowledgeEntryOut, dependencies=[Depends(require_permission("knowledge.write"))])
+def mark_recurrence(entry_id: int, db: Session = Depends(get_db)):
     """标记复发，recurrence_count +1。"""
     obj = db.query(KnowledgeEntry).filter(KnowledgeEntry.id == entry_id).first()
     if not obj:

@@ -9,7 +9,7 @@
       </el-col>
       <el-col :span="6">
         <el-card shadow="hover" class="stat-card">
-          <el-statistic title="SLA违约数" :value="stats.breached" :value-style="{ color: 'var(--app-danger)' }" />
+          <el-statistic title="超期工单数" :value="stats.breached" :value-style="{ color: 'var(--app-danger)' }" />
         </el-card>
       </el-col>
       <el-col :span="6">
@@ -60,7 +60,7 @@
             <span :class="{ 'breach-text': isResolutionBreached(row) }">{{ formatDuration(row.actual_resolution_minutes) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="违约标记" width="100">
+        <el-table-column label="超期标记" width="100">
           <template #default="{ row }">
             <el-tag :type="breachTag(row)" size="small">{{ breachLabel(row) }}</el-tag>
           </template>
@@ -124,7 +124,7 @@ function eqName(row) {
   return id ? `#${id}` : '-'
 }
 
-// 违约判断
+// 超期判断
 function isResponseBreached(row) {
   if (row.is_breached === false) return false
   if (row.response_breached != null) return !!row.response_breached
@@ -145,7 +145,7 @@ function breachLabel(row) {
   const parts = []
   if (isResponseBreached(row)) parts.push('响应超时')
   if (isResolutionBreached(row)) parts.push('解决超时')
-  return parts.length ? parts.join('、') : '违约'
+  return parts.length ? parts.join('、') : '超期'
 }
 function breachTag(row) {
   return (row.is_breached === false) ? 'success' : 'danger'

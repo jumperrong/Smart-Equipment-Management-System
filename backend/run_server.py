@@ -235,8 +235,8 @@ def main():
 
     print(f"""
 ╔══════════════════════════════════════════════════╗
-║           SEMS 设备管理系统                         ║
-║           Semiconductor Equipment Mgmt System      ║
+║           SEMS 半导体制造执行系统                  ║
+║      Semiconductor Manufacturing Execution Sys. ║
 ╠══════════════════════════════════════════════════╣
 ║  服务地址: http://localhost:{port!s:<24}║
 ║  健康检查: http://localhost:{port!s}/health         ║

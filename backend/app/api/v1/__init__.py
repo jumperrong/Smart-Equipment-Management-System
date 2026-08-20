@@ -8,6 +8,9 @@ from app.api.v1 import (
     safety_inspection, work_order_sla,
     knowledge_base, equipment_cost,
     equipment_lifecycle, lubrication,
+    routings, production_orders, dispatches, labor_reports, process_sections,
+    lots, ncrs,
+    fais, spc, production_dashboard, pm_reminder, material_kits,
 )
 
 api_router = APIRouter()
@@ -38,6 +41,19 @@ api_router.include_router(knowledge_base.router)
 api_router.include_router(equipment_cost.router)
 api_router.include_router(equipment_lifecycle.router)
 api_router.include_router(lubrication.router)
+# 生产管理
+api_router.include_router(routings.router)
+api_router.include_router(production_orders.router)
+api_router.include_router(dispatches.router)
+api_router.include_router(labor_reports.router)
+api_router.include_router(process_sections.router)
+api_router.include_router(lots.router)
+api_router.include_router(ncrs.router)
+api_router.include_router(fais.router)
+api_router.include_router(spc.router)
+api_router.include_router(production_dashboard.router)
+api_router.include_router(pm_reminder.router)
+api_router.include_router(material_kits.router)
 
 
 @api_router.get("/health")

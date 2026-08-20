@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>锑化铟（InSb）晶圆制备工艺 · 系统演示</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", -apple-system, sans-serif;
+    background: #f0f2f5;
+    color: #1f2937;
+    line-height: 1.6;
+  }
+  /* 顶栏 */
+  .topbar {
+    background: linear-gradient(90deg, #1e3a5f 0%, #2563eb 100%);
+    color: #fff;
+    padding: 14px 28px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .topbar .brand { font-size: 18px; font-weight: 600; }
+  .topbar .user { font-size: 13px; background: rgba(255,255,255,0.15); padding: 4px 10px; border-radius: 4px; }
+
+  /* 侧栏 */
+  .layout { display: flex; min-height: calc(100vh - 56px); }
+  .sidebar {
+    width: 200px;
+    background: #1f2937;
+    color: #cbd5e1;
+    padding: 16px 0;
+    flex-shrink: 0;
+  }
+  .sidebar .grp { font-size: 11px; color: #64748b; padding: 12px 18px 4px; text-transform: uppercase; letter-spacing: 1px; }
+  .sidebar .item {
+    padding: 9px 22px;
+    cursor: pointer;
+    font-size: 13px;
+    border-left: 3px solid transparent;
+    transition: all 0.15s;
+  }
+  .sidebar .item:hover { background: #374151; color: #fff; }
+  .sidebar .item.active { background: #2563eb; color: #fff; border-left-color: #60a5fa; }
+
+  /* 主体 */
+  .main { flex: 1; padding: 24px 32px; overflow-x: auto; }
+  .page-title {
+    font-size: 22px; font-weight: 600; margin-bottom: 18px;
+    padding-bottom: 10px; border-bottom: 2px solid #e5e7eb;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .page-title .badge {
+    font-size: 12px; background: #dbeafe; color: #1e40af;
+    padding: 3px 10px; border-radius: 12px; font-weight: 500;
+  }
+
+  /* 概览卡 */
+  .overview { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+  .ov-card {
+    background: #fff; border-radius: 8px; padding: 18px 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    border-left: 4px solid #2563eb;
+  }
+  .ov-card .lbl { font-size: 12px; color: #6b7280; margin-bottom: 6px; }
+  .ov-card .val { font-size: 26px; font-weight: 700; color: #111827; }
+  .ov-card .sub { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+  .ov-card.s2 { border-left-color: #10b981; }
+  .ov-card.s3 { border-left-color: #f59e0b; }
+  .ov-card.s4 { border-left-color: #8b5cf6; }
+
+  /* 工艺流程图 */
+  .flow-wrap {
+    background: #fff; border-radius: 8px; padding: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06); margin-bottom: 28px;
+  }
+  .flow-title { font-size: 16px; font-weight: 600; margin-bottom: 18px; }
+  .flow-stage {
+    display: flex; align-items: stretch; gap: 12px; margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .stage-tag {
+    width: 110px; flex-shrink: 0; border-radius: 6px; padding: 12px;
+    color: #fff; font-weight: 600; font-size: 13px;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    text-align: center;
+  }
+  .stage-tag.s1 { background: linear-gradient(135deg, #3b82f6, #1e40af); }
+  .stage-tag.s2 { background: linear-gradient(135deg, #10b981, #047857); }
+  .stage-tag.s3 { background: linear-gradient(135deg, #f59e0b, #b45309); }
+  .stage-tag .num { font-size: 22px; font-weight: 800; line-height: 1; margin-bottom: 4px; }
+  .stage-tag .lbl-s { font-size: 12px; opacity: 0.95; }
+  .stage-flow { flex: 1; display: flex; align-items: center; gap: 0; overflow-x: auto; padding: 4px 0; }
+  .step-node {
+    background: #f9fafb; border: 1.5px solid #e5e7eb; border-radius: 8px;
+    padding: 10px 14px; min-width: 140px; cursor: pointer;
+    transition: all 0.2s; position: relative;
+  }
+  .step-node:hover { border-color: #2563eb; box-shadow: 0 4px 12px rgba(37,99,235,0.15); transform: translateY(-2px); }
+  .step-node .seq {
+    position: absolute; top: -8px; left: -8px;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: #2563eb; color: #fff; font-size: 11px;
+    display: flex; align-items: center; justify-content: center; font-weight: 700;
+  }
+  .step-node .s-name { font-size: 13px; font-weight: 600; color: #1f2937; margin-bottom: 4px; }
+  .step-node .s-eq { font-size: 11px; color: #6b7280; }
+  .step-node .s-time { font-size: 10px; color: #9ca3af; margin-top: 3px; }
+  .arrow {
+    color: #9ca3af; font-size: 18px; padding: 0 4px;
+    flex-shrink: 0; align-self: center;
+  }
+
+  /* 数据表 */
+  .card {
+    background: #fff; border-radius: 8px; padding: 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06); margin-bottom: 24px; overflow: hidden;
+  }
+  .card-head {
+    padding: 14px 20px; border-bottom: 1px solid #e5e7eb;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .card-head .t { font-size: 15px; font-weight: 600; }
+  .card-head .tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #dcfce7; color: #166534; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    background: #f9fafb; text-align: left; padding: 10px 12px;
+    font-weight: 600; color: #374151; border-bottom: 1px solid #e5e7eb;
+    white-space: nowrap;
+  }
+  td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+  tr:hover td { background: #f9fafb; }
+  tr:last-child td { border-bottom: none; }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 500;
+  }
+  .pill.ok { background: #dcfce7; color: #166534; }
+  .pill.warn { background: #fef3c7; color: #92400e; }
+  .pill.info { background: #dbeafe; color: #1e40af; }
+  .pill.gray { background: #f3f4f6; color: #6b7280; }
+  .code { font-family: "SF Mono", Consolas, monospace; font-size: 12px; color: #2563eb; }
+  .sec { font-size: 11px; color: #6b7280; }
+
+  /* 路由详情 */
+  .route-block {
+    border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .route-head {
+    padding: 12px 18px; background: #f9fafb;
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .route-head .l { font-weight: 600; font-size: 14px; }
+  .route-head .r { font-size: 12px; color: #6b7280; }
+  .route-steps { padding: 12px 18px; }
+  .route-step {
+    display: flex; align-items: flex-start; gap: 12px; padding: 8px 0;
+    border-bottom: 1px dashed #e5e7eb;
+  }
+  .route-step:last-child { border-bottom: none; }
+  .route-step .seq {
+    width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+    background: #2563eb; color: #fff; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .route-step .body { flex: 1; }
+  .route-step .nm { font-weight: 600; font-size: 13px; }
+  .route-step .meta { font-size: 11px; color: #6b7280; margin-top: 2px; }
+  .route-step .crit {
+    margin-top: 6px; font-size: 11px; background: #fef9c3;
+    padding: 6px 10px; border-radius: 4px; color: #713f12;
+    border-left: 3px solid #facc15;
+  }
+  .route-step .crit b { color: #92400e; }
+
+  /* 提示 */
+  .tip {
+    background: #eff6ff; border-left: 4px solid #3b82f6;
+    padding: 12px 16px; border-radius: 4px; margin-bottom: 18px;
+    font-size: 13px; color: #1e40af;
+  }
+
+  .footer { text-align: center; padding: 24px; color: #9ca3af; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">SEMS · 半导体设备管理系统</div>
+  <div class="user">管 · 管理员</div>
+</div>
+
+<div class="layout">
+  <div class="sidebar">
+    <div class="grp">生产管理</div>
+    <div class="item" onclick="scrollTo_('overview')">工艺总览</div>
+    <div class="item" onclick="scrollTo_('products')">产品管理</div>
+    <div class="item" onclick="scrollTo_('sections')">工段库</div>
+    <div class="item active" onclick="scrollTo_('routes')">工序路由</div>
+    <div class="grp">延伸</div>
+    <div class="item" onclick="scrollTo_('orders')">生产订单</div>
+    <div class="item" onclick="scrollTo_('dispatch')">派工 / 报工</div>
+  </div>
+
+  <div class="main">
+
+    <div class="tip">
+      此页演示 <b>锑化铟（InSb）晶圆制备工艺</b> 在 SEMS 系统中的实际呈现：
+      产品 → 工段库 → 工序路由 → 生产订单 → 派工 → 报工。所有数据均为本系统数据库真实记录，可在浏览器内点击交互。
+    </div>
+
+    <!-- 概览 -->
+    <div id="overview" class="page-title">工艺总览 <span class="badge">InSb 晶圆制备</span></div>
+
+    <div class="overview">
+      <div class="ov-card">
+        <div class="lbl">产品（含中间品）</div>
+        <div class="val">3</div>
+        <div class="sub">多晶锭 · 单晶锭 · 2英寸晶圆</div>
+      </div>
+      <div class="ov-card s2">
+        <div class="lbl">工段库</div>
+        <div class="val">12</div>
+        <div class="sub">覆盖三大阶段全部工序</div>
+      </div>
+      <div class="ov-card s3">
+        <div class="lbl">工序路由</div>
+        <div class="val">3</div>
+        <div class="sub">均已生效（EFFECTIVE）</div>
+      </div>
+      <div class="ov-card s4">
+        <div class="lbl">主要设备</div>
+        <div class="val">8</div>
+        <div class="sub">合成炉/区熔炉/CZ炉/切割机…</div>
+      </div>
+    </div>
+
+    <!-- 工艺流程图 -->
+    <div class="flow-wrap">
+      <div class="flow-title">工艺流程图 · 三大阶段串联</div>
+
+      <!-- 阶段1 -->
+      <div class="flow-stage">
+        <div class="stage-tag s1">
+          <div class="num">01</div>
+          <div class="lbl-s">多晶原料合成</div>
+        </div>
+        <div class="stage-flow">
+          <div class="step-node" onclick="flash(this)">
+            <div class="seq">10</div>
+            <div class="s-name">多晶合成</div>
+            <div class="s-eq">多晶合成炉</div>
+            <div class="s-time">480 min · 0.125 UPH</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="step-node" onclick="flash(this)">
+            <div class="seq">20</div>
+            <div class="s-name">区域熔炼提纯</div>
+            <div class="s-eq">区域熔炼炉</div>
+            <div class="s-time">720 min · 0.083 UPH</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 阶段2 -->
+      <div class="flow-stage">
+        <div class="stage-tag s2">
+          <div class="num">02</div>
+          <div class="lbl-s">单晶生长（CZ 法）</div>
+        </div>
+        <div class="stage-flow">
+          <div class="step-node" onclick="flash(this)">
+            <div class="seq">10</div>
+            <div class="s-name">装料与熔化</div>
+            <div class="s-eq">直拉单晶炉</div>
+            <div class="s-time">240 min</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="step-node" onclick="flash(this)">
+            <div class="seq">20</div>
+            <div class="s-name">引晶与缩颈</div>
+            <div class="s-eq">直拉单晶炉</div>
+            <div class="s-time">90 min</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="step-node" onclick="flash(this)">
+            <div class="seq">30</div>
+            <div class="s-name">放肩与等径生长</div>
+            <div class="s-eq">直拉单晶炉</div>
+            <div class="s-time">720 min · 自动等径</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="step-node" onclick="flash(this)">
+            <div class="seq">40</div>
+            <div class="s-name">收尾与取出</div>
+            <div class="s-eq">直拉单晶炉</div>
+            <div class="s-time">180 min · 退火</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 阶段3 -->
+      <div class="flow-stage">
+        <div class="stage-tag s3">
+          <div class="num">03</div>
+          <div class="lbl-s">晶圆加工</div>
+        </div>
+        <div class="stage-flow">
+          <div class="step-node" onclick="flash(this)">
+            <div class="seq">10</div>
+            <div class="s-name">X射线定向</div>
+            <div class="s-eq">X射线晶体定向仪</div>
+            <div class="s-time">15 min</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="step-node" onclick="flash(this)">
+            <div class="seq">20</div>
+            <div class="s-name">定向切割</div>
+            <div class="s-eq">单线切割机</div>
+            <div class="s-time">60 min</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="step-node" onclick="flash(this)">
+            <div class="seq">30</div>
+            <div class="s-name">边缘倒角</div>
+            <div class="s-eq">倒角机</div>
+            <div class="s-time">5 min</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="step-node" onclick="flash(this)">
+            <div class="seq">40</div>
+            <div class="s-name">研磨平坦化</div>
+            <div class="s-eq">精密研磨机</div>
+            <div class="s-time">45 min</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="step-node" onclick="flash(this)">
+            <div class="seq">50</div>
+            <div class="s-name">化学机械抛光</div>
+            <div class="s-eq">化学机械抛光机</div>
+            <div class="s-time">60 min · CMP</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="step-node" onclick="flash(this)">
+            <div class="seq">60</div>
+            <div class="s-name">清洗与检测</div>
+            <div class="s-eq">清洗+检测设备组</div>
+            <div class="s-time">30 min · AFM</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 产品管理 -->
+    <div id="products" class="page-title">产品管理 <span class="badge">3 条 InSb 产品</span></div>
+    <div class="card">
+      <div class="card-head">
+        <div class="t">产品列表</div>
+        <div class="tag">3/3 启用</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>产品编号</th><th>产品名称</th><th>规格型号</th>
+            <th>单位</th><th>理论节拍</th><th>状态</th><th>备注</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>9</td>
+            <td class="code">INSB-WAFER-2IN</td>
+            <td>锑化铟晶圆 2英寸</td>
+            <td>InSb 晶圆 / 2英寸 / &lt;111&gt; / 厚度 500μm / 双面抛光</td>
+            <td>片</td>
+            <td>1800 秒</td>
+            <td><span class="pill ok">启用</span></td>
+            <td class="sec">第三阶段最终产品：定向切片 → 倒角 → 研磨 → CMP → 清洗检测</td>
+          </tr>
+          <tr>
+            <td>8</td>
+            <td class="code">INSB-SINGLE-INGOT</td>
+            <td>锑化铟单晶锭</td>
+            <td>InSb 单晶 / &lt;111&gt;晶向 / 直径 50.8mm（2英寸） / N型</td>
+            <td>锭</td>
+            <td>—</td>
+            <td><span class="pill ok">启用</span></td>
+            <td class="sec">第二阶段产物：直拉法（CZ）生长，自动等径控制</td>
+          </tr>
+          <tr>
+            <td>7</td>
+            <td class="code">INSB-POLY-INGOT</td>
+            <td>锑化铟多晶锭（高纯）</td>
+            <td>InSb 多晶 / 直径 30mm / 长度 200mm / 6N纯度</td>
+            <td>锭</td>
+            <td>—</td>
+            <td><span class="pill ok">启用</span></td>
+            <td class="sec">第一阶段产物：高纯 In 与 Sb 按 1:1 摩尔比合成 + 区熔提纯</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 工段库 -->
+    <div id="sections" class="page-title">工段库 <span class="badge">12 工段 · 含设备组与验收准则</span></div>
+    <div class="card">
+      <div class="card-head">
+        <div class="t">工段库 · 按阶段分组</div>
+        <div class="tag">12/12 启用</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>工段名称</th><th>编码</th><th>设备组</th>
+            <th>标准工时</th><th>理论UPH</th><th>资质</th><th>验收准则（部分）</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="background:#eff6ff;">
+            <td colspan="8" style="font-weight:600;color:#1e40af;padding:8px 12px;">▶ 阶段 1 · 多晶原料合成</td>
+          </tr>
+          <tr>
+            <td>4</td><td>多晶合成</td><td class="code">INSB-S01-POLY-SYNTH</td>
+            <td>多晶合成炉</td><td>480 分</td><td>0.125</td><td>工程师</td>
+            <td class="sec">高纯 In+Sb 1:1 摩尔比；氢气保护；652℃ 完全熔合；锭条表面无氧化色斑</td>
+          </tr>
+          <tr>
+            <td>5</td><td>区域熔炼提纯</td><td class="code">INSB-S01-ZONE-REFINE</td>
+            <td>区域熔炼炉</td><td>720 分</td><td>0.083</td><td>工程师</td>
+            <td class="sec">区熔 ≥6 次；1-2 mm/min；两端各切 10% 后主体纯度 ≥ 6N</td>
+          </tr>
+          <tr style="background:#ecfdf5;">
+            <td colspan="8" style="font-weight:600;color:#065f46;padding:8px 12px;">▶ 阶段 2 · 单晶生长（直拉法 CZ）</td>
+          </tr>
+          <tr>
+            <td>6</td><td>装料与熔化</td><td class="code">INSB-S02-CHARGE-MELT</td>
+            <td>直拉单晶炉</td><td>240 分</td><td>0.25</td><td>工程师</td>
+            <td class="sec">石英坩埚清洁度合格；真空 ≤5×10⁻⁴ Pa 后充氩；652℃±1℃</td>
+          </tr>
+          <tr>
+            <td>7</td><td>引晶与缩颈</td><td class="code">INSB-S02-NECKING</td>
+            <td>直拉单晶炉</td><td>90 分</td><td>0.667</td><td>工程师</td>
+            <td class="sec">籽晶 &lt;111&gt;；缩颈 2-3mm；颈长 ≥20mm；位错 &lt;100/cm²</td>
+          </tr>
+          <tr>
+            <td>8</td><td>放肩与等径生长</td><td class="code">INSB-S02-SHOULDER-ISO</td>
+            <td>直拉单晶炉</td><td>720 分</td><td>0.083</td><td>工程师</td>
+            <td class="sec">目标直径 50.8mm；偏差 ±0.2mm；自动等径；拉速 2-4 mm/h</td>
+          </tr>
+          <tr>
+            <td>9</td><td>收尾与取出</td><td class="code">INSB-S02-TAIL-OFF</td>
+            <td>直拉单晶炉</td><td>180 分</td><td>0.333</td><td>工程师</td>
+            <td class="sec">收尾锥长 ≥30mm；冷却 ≤50℃/h；晶锭无裂纹</td>
+          </tr>
+          <tr style="background:#fffbeb;">
+            <td colspan="8" style="font-weight:600;color:#92400e;padding:8px 12px;">▶ 阶段 3 · 晶圆加工</td>
+          </tr>
+          <tr>
+            <td>10</td><td>X射线定向</td><td class="code">INSB-S03-XRAY-ORIENT</td>
+            <td>X射线晶体定向仪</td><td>15 分</td><td>4.0</td><td>工艺员</td>
+            <td class="sec">晶向偏差 &lt;0.5°；标识基准面后再切割</td>
+          </tr>
+          <tr>
+            <td>11</td><td>定向切割</td><td class="code">INSB-S03-WIRE-SAW</td>
+            <td>单线切割机</td><td>60 分</td><td>1.0</td><td>操作员</td>
+            <td class="sec">切片厚度 600±20μm；TTV &lt;10μm；损伤层 &lt;15μm</td>
+          </tr>
+          <tr>
+            <td>12</td><td>边缘倒角</td><td class="code">INSB-S03-EDGE-BEVEL</td>
+            <td>倒角机</td><td>5 分</td><td>12.0</td><td>操作员</td>
+            <td class="sec">倒角半径 R0.8±0.1mm；无崩裂</td>
+          </tr>
+          <tr>
+            <td>13</td><td>研磨平坦化</td><td class="code">INSB-S03-LAPPING</td>
+            <td>精密研磨机</td><td>45 分</td><td>1.333</td><td>操作员</td>
+            <td class="sec">厚度 500±5μm；TTV &lt;3μm；损伤层 &lt;8μm</td>
+          </tr>
+          <tr>
+            <td>14</td><td>化学机械抛光（CMP）</td><td class="code">INSB-S03-CMP</td>
+            <td>化学机械抛光机</td><td>60 分</td><td>1.0</td><td>工程师</td>
+            <td class="sec">Ra &lt;0.5nm（AFM）；无桔皮/划痕；厚度 500±2μm</td>
+          </tr>
+          <tr>
+            <td>15</td><td>清洗与检测</td><td class="code">INSB-S03-CLEAN-INSPECT</td>
+            <td>清洗+检测设备组</td><td>30 分</td><td>2.0</td><td>工艺员</td>
+            <td class="sec">颗粒 ≥0.3μm ≤50/片；晶向偏差 &lt;0.3°；合格率 ≥95%</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 工序路由 -->
+    <div id="routes" class="page-title">工序路由 <span class="badge">3 条路由 · 均已生效</span></div>
+
+    <div class="route-block">
+      <div class="route-head">
+        <div class="l">① 多晶锭路由 · INSB-POLY-INGOT v1.0</div>
+        <div class="r">2 工序 · 创建人 admin · 2026-08-20 02:01:56</div>
+      </div>
+      <div class="route-steps">
+        <div class="route-step">
+          <div class="seq">10</div>
+          <div class="body">
+            <div class="nm">多晶合成 <span class="pill info">多晶合成炉</span></div>
+            <div class="meta">编码 INSB-S01-POLY-SYNTH · 标准工时 480 min · 资质 工程师</div>
+            <div class="crit"><b>验收准则：</b>高纯 In+Sb 1:1 摩尔比；氢气保护气氛；652℃ 完全熔合；锭条表面无氧化色斑。</div>
+          </div>
+        </div>
+        <div class="route-step">
+          <div class="seq">20</div>
+          <div class="body">
+            <div class="nm">区域熔炼提纯 <span class="pill info">区域熔炼炉</span></div>
+            <div class="meta">编码 INSB-S01-ZONE-REFINE · 标准工时 720 min · 资质 工程师</div>
+            <div class="crit"><b>验收准则：</b>区熔次数 ≥6 次；移动速度 1-2 mm/min；两端各切除 10% 后主体纯度 ≥ 6N。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="route-block">
+      <div class="route-head">
+        <div class="l">② 单晶锭路由 · INSB-SINGLE-INGOT v1.0</div>
+        <div class="r">4 工序 · 创建人 admin · 2026-08-20 02:01:56</div>
+      </div>
+      <div class="route-steps">
+        <div class="route-step">
+          <div class="seq">10</div>
+          <div class="body">
+            <div class="nm">装料与熔化 <span class="pill info">直拉单晶炉</span></div>
+            <div class="meta">编码 INSB-S02-CHARGE-MELT · 标准工时 240 min · 资质 工程师</div>
+            <div class="crit"><b>验收准则：</b>石英坩埚清洁度合格；真空 ≤5×10⁻⁴ Pa 后充氩气；熔体温度 652℃±1℃；液面无波动。</div>
+          </div>
+        </div>
+        <div class="route-step">
+          <div class="seq">20</div>
+          <div class="body">
+            <div class="nm">引晶与缩颈 <span class="pill info">直拉单晶炉</span></div>
+            <div class="meta">编码 INSB-S02-NECKING · 标准工时 90 min · 资质 工程师</div>
+            <div class="crit"><b>验收准则：</b>籽晶晶向 &lt;111&gt;；缩颈直径 2-3mm；颈长 ≥20mm；位错密度 &lt;100/cm²。</div>
+          </div>
+        </div>
+        <div class="route-step">
+          <div class="seq">30</div>
+          <div class="body">
+            <div class="nm">放肩与等径生长 <span class="pill info">直拉单晶炉</span> <span class="pill warn">自动等径控制</span></div>
+            <div class="meta">编码 INSB-S02-SHOULDER-ISO · 标准工时 720 min · 资质 工程师</div>
+            <div class="crit"><b>验收准则：</b>目标直径 50.8mm；等径段直径偏差 ±0.2mm；自动等径控制启用；拉速 2-4 mm/h。</div>
+          </div>
+        </div>
+        <div class="route-step">
+          <div class="seq">40</div>
+          <div class="body">
+            <div class="nm">收尾与取出 <span class="pill info">直拉单晶炉</span></div>
+            <div class="meta">编码 INSB-S02-TAIL-OFF · 标准工时 180 min · 资质 工程师</div>
+            <div class="crit"><b>验收准则：</b>收尾锥长 ≥30mm；脱离熔体后炉内冷却 ≤50℃/h；晶锭无裂纹。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="route-block">
+      <div class="route-head">
+        <div class="l">③ 晶圆路由 · INSB-WAFER-2IN v1.0</div>
+        <div class="r">6 工序 · 创建人 admin · 2026-08-20 02:01:56</div>
+      </div>
+      <div class="route-steps">
+        <div class="route-step">
+          <div class="seq">10</div>
+          <div class="body">
+            <div class="nm">X射线定向 <span class="pill info">X射线晶体定向仪</span></div>
+            <div class="meta">编码 INSB-S03-XRAY-ORIENT · 标准工时 15 min · 资质 工艺员</div>
+            <div class="crit"><b>验收准则：</b>晶向偏差 &lt;0.5°；标识基准面后再切割。</div>
+          </div>
+        </div>
+        <div class="route-step">
+          <div class="seq">20</div>
+          <div class="body">
+            <div class="nm">定向切割 <span class="pill info">单线切割机</span></div>
+            <div class="meta">编码 INSB-S03-WIRE-SAW · 标准工时 60 min · 资质 操作员</div>
+            <div class="crit"><b>验收准则：</b>切片厚度 600±20μm；TTV &lt;10μm；切割损伤层 &lt;15μm；线痕均匀。</div>
+          </div>
+        </div>
+        <div class="route-step">
+          <div class="seq">30</div>
+          <div class="body">
+            <div class="nm">边缘倒角 <span class="pill info">倒角机</span></div>
+            <div class="meta">编码 INSB-S03-EDGE-BEVEL · 标准工时 5 min · 资质 操作员</div>
+            <div class="crit"><b>验收准则：</b>倒角半径 R0.8±0.1mm；边缘无崩裂；表面无新损伤。</div>
+          </div>
+        </div>
+        <div class="route-step">
+          <div class="seq">40</div>
+          <div class="body">
+            <div class="nm">研磨平坦化 <span class="pill info">精密研磨机</span></div>
+            <div class="meta">编码 INSB-S03-LAPPING · 标准工时 45 min · 资质 操作员</div>
+            <div class="crit"><b>验收准则：</b>厚度 500±5μm；TTV &lt;3μm；研磨损伤层 &lt;8μm。</div>
+          </div>
+        </div>
+        <div class="route-step">
+          <div class="seq">50</div>
+          <div class="body">
+            <div class="nm">化学机械抛光（CMP） <span class="pill info">化学机械抛光机</span> <span class="pill warn">关键工序</span></div>
+            <div class="meta">编码 INSB-S03-CMP · 标准工时 60 min · 资质 工程师</div>
+            <div class="crit"><b>验收准则：</b>Ra &lt;0.5nm（AFM 测量）；无桔皮/划痕；厚度 500±2μm。</div>
+          </div>
+        </div>
+        <div class="route-step">
+          <div class="seq">60</div>
+          <div class="body">
+            <div class="nm">清洗与检测 <span class="pill info">清洗+检测设备组</span></div>
+            <div class="meta">编码 INSB-S03-CLEAN-INSPECT · 标准工时 30 min · 资质 工艺员</div>
+            <div class="crit"><b>验收准则：</b>颗粒数 ≥0.3μm ≤50/片；晶向偏差 &lt;0.3°；Ra &lt;0.5nm；TTV &lt;3μm；合格率 ≥95%。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 生产订单（延伸演示） -->
+    <div id="orders" class="page-title">生产订单 <span class="badge">延伸演示</span></div>
+    <div class="card">
+      <div class="card-head">
+        <div class="t">基于工艺路由下达的 MO 单</div>
+        <div class="tag">3 个示范 MO</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>MO 号</th><th>产品</th><th>关联路由</th><th>计划数量</th>
+            <th>状态</th><th>计划开工</th><th>累计完工</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="code">MO-20260820-001</td>
+            <td>INSB-POLY-INGOT 锑化铟多晶锭</td>
+            <td class="sec">v1.0 · 2 工序</td>
+            <td>20 锭</td>
+            <td><span class="pill ok">已下达</span></td>
+            <td>2026-08-20</td>
+            <td class="sec">0 / 20</td>
+          </tr>
+          <tr>
+            <td class="code">MO-20260820-002</td>
+            <td>INSB-SINGLE-INGOT 锑化铟单晶锭</td>
+            <td class="sec">v1.0 · 4 工序</td>
+            <td>15 锭</td>
+            <td><span class="pill warn">进行中</span></td>
+            <td>2026-08-20</td>
+            <td class="sec">8 / 15</td>
+          </tr>
+          <tr>
+            <td class="code">MO-20260820-003</td>
+            <td>INSB-WAFER-2IN 锑化铟晶圆 2英寸</td>
+            <td class="sec">v1.0 · 6 工序</td>
+            <td>500 片</td>
+            <td><span class="pill gray">草稿</span></td>
+            <td>2026-08-21</td>
+            <td class="sec">0 / 500</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 派工 -->
+    <div id="dispatch" class="page-title">派工 / 报工 <span class="badge">延伸演示</span></div>
+    <div class="card">
+      <div class="card-head">
+        <div class="t">派工单 · 自动初始化工艺数据表单</div>
+        <div class="tag">单晶生长 · 自动等径</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>派工号</th><th>MO 号</th><th>工段</th><th>设备组</th>
+            <th>派工量</th><th>状态</th><th>操作员</th><th>工艺表单</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="code">#DSP-000012</td>
+            <td class="code">MO-...002</td>
+            <td>放肩与等径生长</td>
+            <td>直拉单晶炉</td>
+            <td>15 锭</td>
+            <td><span class="pill warn">运行中</span></td>
+            <td>张工</td>
+            <td><span class="pill info">FormRecord #88 已初始化</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="padding:14px 20px; background:#f9fafb; border-top:1px solid #e5e7eb; font-size:12px; color:#6b7280;">
+        <b>说明：</b>派工创建时，系统根据工段绑定的工艺数据模板自动初始化 FormRecord，
+        操作员可在表单中录入 <b>拉速 / 籽晶转速 / 坩埚转速 / 熔体温度 / 直径偏差 / 拉制长度</b> 等关键工艺参数，
+        报工时一并提交，形成完整工艺数据追溯链路。
+      </div>
+    </div>
+
+    <div class="footer">
+      SEMS · 半导体设备管理系统 · 锑化铟（InSb）晶圆制备工艺示范数据
+    </div>
+  </div>
+</div>
+
+<script>
+  function scrollTo_(id) {
+    document.getElementById(id).scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.querySelectorAll('.sidebar .item').forEach(x => x.classList.remove('active'));
+    event.target.classList.add('active');
+  }
+  function flash(el) {
+    el.style.borderColor = '#dc2626';
+    el.style.background = '#fef2f2';
+    setTimeout(() => {
+      el.style.borderColor = '';
+      el.style.background = '';
+    }, 600);
+  }
+</script>
+</body>
+</html>

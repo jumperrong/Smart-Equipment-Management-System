@@ -130,6 +130,43 @@ const routes = [
         component: () => import('@/views/Quality.vue'),
         meta: { title: '品管工具', icon: 'Document' },
       },
+      // 生产管理
+      {
+        path: 'products',
+        name: 'Products',
+        component: () => import('@/views/Products.vue'),
+        meta: { title: '产品管理', icon: 'Goods', roles: ['admin', 'engineer', 'process_engineer'] },
+      },
+      {
+        path: 'process-sections',
+        name: 'ProcessSections',
+        component: () => import('@/views/ProcessSections.vue'),
+        meta: { title: '工段库', icon: 'Files', roles: ['admin', 'process_engineer'] },
+      },
+      {
+        path: 'routings',
+        name: 'Routings',
+        component: () => import('@/views/Routings.vue'),
+        meta: { title: '工序路由', icon: 'Share', roles: ['admin', 'process_engineer'] },
+      },
+      {
+        path: 'production-orders',
+        name: 'ProductionOrders',
+        component: () => import('@/views/ProductionOrders.vue'),
+        meta: { title: '生产订单', icon: 'Document', roles: ['admin', 'production_manager'] },
+      },
+      {
+        path: 'dispatches',
+        name: 'Dispatches',
+        component: () => import('@/views/Dispatches.vue'),
+        meta: { title: '派工管理', icon: 'SetUp', roles: ['admin', 'production_manager', 'team_leader'] },
+      },
+      {
+        path: 'labor-reports',
+        name: 'LaborReports',
+        component: () => import('@/views/LaborReports.vue'),
+        meta: { title: '报工记录', icon: 'EditPen', roles: ['admin', 'team_leader', 'operator'] },
+      },
       // 辅助管理（低频）
       {
         path: 'environment-logs',

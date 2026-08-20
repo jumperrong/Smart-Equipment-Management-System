@@ -63,6 +63,8 @@ def _seed_users(db):
         ("engineer2",   "李工",     UserRole.ENGINEER,         "eng123"),
         ("process1",    "周工艺",   UserRole.PROCESS_ENGINEER, "proc123"),
         ("qa1",         "陈品管",   UserRole.QA,               "qa123"),
+        ("prod_mgr1",   "吴主管",   UserRole.PRODUCTION_MANAGER, "pm123"),
+        ("leader1",     "钱班长",   UserRole.TEAM_LEADER,      "tl123"),
         ("operator1",   "王操作",   UserRole.OPERATOR,         "op123"),
         ("operator2",   "赵操作",   UserRole.OPERATOR,         "op123"),
         ("viewer1",     "孙查看",   UserRole.VIEWER,            "view123"),
@@ -399,7 +401,7 @@ def _seed_inspection_records(db, templates, eqs, users):
 
 
 # =====================================================================
-#  10. 工单（12 条，覆盖各种状态/类型，部分 SLA 违约）
+#  10. 工单（12 条，覆盖各种状态/类型，部分 SLA 超期）
 # =====================================================================
 
 def _seed_work_orders(db, eqs, users):
@@ -470,7 +472,7 @@ def _seed_work_orders(db, eqs, users):
         work_orders.append(wo)
     db.flush()
     breached = sum(1 for w in work_orders if w.sla_breach)
-    print(f"    + 工单: {len(work_orders)} 条（SLA 违约 {breached} 条）")
+    print(f"    + 工单: {len(work_orders)} 条（SLA 超期 {breached} 条）")
     return work_orders
 
 
@@ -1230,6 +1232,242 @@ def _seed_equipment_costs(db, eqs, work_orders, users):
 
 
 # =====================================================================
+#  产品 + 生产记录（为生产管理角色看板提供数据）
+# =====================================================================
+
+def _seed_products_and_production(db, eqs, users):
+    """生成产品和今日/历史生产记录。"""
+    print(">>> 创建产品与生产记录...")
+    from app.models import Product, ProductionRecord
+
+    products = [
+        ("P-A001", "芯片A型", "5nm / 12寸", "片", 2.5),
+        ("P-B002", "芯片B型", "7nm / 12寸", "片", 3.0),
+        ("P-C003", "芯片C型", "14nm / 8寸", "片", 4.0),
+        ("P-D004", "功率器件", "IGBT / 6寸", "片", 5.5),
+        ("P-E005", "传感器芯片", "MEMS / 8寸", "片", 3.5),
+    ]
+    prod_objs = []
+    for code, name, spec, unit, cycle in products:
+        p = Product(code=code, name=name, spec=spec, unit=unit, target_cycle=cycle, is_active=True)
+        db.add(p)
+        prod_objs.append(p)
+    db.flush()
+
+    # 生产记录：今日 + 历史
+    operator1 = users.get("operator1")
+    operator2 = users.get("operator2")
+    leader1 = users.get("leader1")
+    prod_mgr1 = users.get("prod_mgr1")
+    operators = [o for o in [operator1, operator2] if o]
+
+    now = datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    count = 0
+
+    # 今日在产记录（每台 RUN/IDLE 设备 1~2 条）
+    running_eqs = [e for e in eqs if e.current_status in ("RUN", "IDLE", "ENGINEERING", "PROCESS_VALIDATION")]
+    for i, eq in enumerate(running_eqs[:8]):
+        p = prod_objs[i % len(prod_objs)]
+        op = operators[i % len(operators)] if operators else None
+        start = today_start + timedelta(hours=random.randint(0, now.hour), minutes=random.randint(0, 59))
+        plan_qty = random.randint(800, 2000)
+        input_qty = plan_qty - random.randint(0, 50)
+        good_qty = input_qty - random.randint(0, 30)
+        defect_qty = input_qty - good_qty
+        is_finished = random.random() > 0.4
+
+        rec = ProductionRecord(
+            record_no=f"PR-T{now.strftime('%m%d')}-{i+1:03d}",
+            equipment_id=eq.id,
+            product_id=p.id,
+            batch_no=f"B{now.strftime('%Y%m%d')}-{i+1:02d}",
+            plan_qty=plan_qty,
+            input_qty=input_qty,
+            good_qty=good_qty,
+            defect_qty=defect_qty,
+            start_time=start,
+            end_time=start + timedelta(minutes=random.randint(30, 180)) if is_finished else None,
+            duration_minutes=float(random.randint(30, 180)) if is_finished else None,
+            ideal_cycle=p.target_cycle,
+            operator_id=op.id if op else None,
+        )
+        db.add(rec)
+        count += 1
+
+    # 历史生产记录（过去 7 天，每天 3~5 条）
+    for day_offset in range(1, 8):
+        day = today_start - timedelta(days=day_offset)
+        for i in range(random.randint(3, 5)):
+            eq = eqs[random.randint(0, len(eqs)-1)]
+            p = prod_objs[random.randint(0, len(prod_objs)-1)]
+            op = operators[random.randint(0, len(operators)-1)] if operators else None
+            start = day + timedelta(hours=random.randint(6, 22), minutes=random.randint(0, 59))
+            plan_qty = random.randint(500, 1500)
+            input_qty = plan_qty - random.randint(0, 30)
+            good_qty = input_qty - random.randint(0, 20)
+            defect_qty = input_qty - good_qty
+
+            rec = ProductionRecord(
+                record_no=f"PR-H{day.strftime("%m%d")}-{i+1:03d}",
+                equipment_id=eq.id,
+                product_id=p.id,
+                batch_no=f"B{day.strftime("%Y%m%d")}-{i+1:02d}",
+                plan_qty=plan_qty,
+                input_qty=input_qty,
+                good_qty=good_qty,
+                defect_qty=defect_qty,
+                start_time=start,
+                end_time=start + timedelta(minutes=random.randint(60, 240)),
+                duration_minutes=float(random.randint(60, 240)),
+                ideal_cycle=p.target_cycle,
+                operator_id=op.id if op else None,
+            )
+            db.add(rec)
+            count += 1
+
+    db.flush()
+    print(f"    + 产品: {len(prod_objs)} 个, 生产记录: {count} 条（今日: ~{len(running_eqs[:8])} 条）")
+    return prod_objs
+
+
+def _seed_production_management(db, prod_objs, eqs, users):
+    """生成生产管理模块测试数据：工序路由、生产订单、派工、报工。"""
+    print(">>> 创建生产管理模块数据...")
+    from app.models import (
+        Routing, RoutingStep, RoutingStatus,
+        ProductionOrder, ProductionOrderStatus, MOSourceType,
+        Dispatch, DispatchStatus, LaborReport,
+    )
+    now = datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # 1. 工序路由（前3个产品各1个生效版本）
+    routing_steps_def = [
+        [("10", "清洗", 5.0, 120), ("20", "光刻", 15.0, 40), ("30", "刻蚀", 10.0, 60), ("40", "去胶", 3.0, 200), ("50", "量测", 5.0, 120)],
+        [("10", "薄膜沉积", 20.0, 30), ("20", "光刻", 15.0, 40), ("30", "刻蚀", 10.0, 60), ("40", "退火", 30.0, 20), ("50", "量测", 5.0, 120)],
+        [("10", "氧化", 25.0, 24), ("20", "CVD沉积", 18.0, 33), ("30", "光刻", 15.0, 40), ("40", "刻蚀", 10.0, 60), ("50", "离子注入", 12.0, 50), ("60", "退火", 30.0, 20)],
+    ]
+    routings_created = []
+    for i, prod in enumerate(prod_objs[:3]):
+        steps = routing_steps_def[i % len(routing_steps_def)]
+        r = Routing(
+            product_id=prod.id,
+            version=f"v1.{i+1}",
+            status=RoutingStatus.EFFECTIVE.value,
+            effective_date=now - timedelta(days=30),
+            next_review_date=now + timedelta(days=335),
+            change_reason="NEW" if i == 0 else "ENG_CHG",
+            remark=f"{prod.name} 工艺路线",
+            created_by_id=users.get("process1", list(users.values())[0]).id if users else None,
+            created_by_name=users.get("process1", list(users.values())[0]).username if users else "system",
+        )
+        db.add(r)
+        db.flush()
+        for seq, name, cycle, uph in steps:
+            s = RoutingStep(
+                routing_id=r.id,
+                seq=int(seq),
+                step_name=name,
+                standard_cycle_min=cycle,
+                theoretical_uph=uph,
+                acceptance_criteria="全检合格率>=98%",
+                equipment_group="通用设备组",
+                required_skill_level="L2",
+            )
+            db.add(s)
+        routings_created.append(r)
+
+    # 2. 生产订单（MO）
+    mo_statuses = [
+        (ProductionOrderStatus.IN_PROGRESS.value, 800, 600, 20),
+        (ProductionOrderStatus.IN_PROGRESS.value, 1200, 900, 30),
+        (ProductionOrderStatus.RELEASED.value, 1000, 0, 0),
+        (ProductionOrderStatus.COMPLETED.value, 500, 480, 10),
+        (ProductionOrderStatus.IN_PROGRESS.value, 2000, 1500, 50),
+    ]
+    mo_objs = []
+    for i, (status, plan, completed, scrapped) in enumerate(mo_statuses):
+        prod = prod_objs[i % len(prod_objs)]
+        routing = routings_created[i % len(routings_created)] if routings_created else None
+        mo = ProductionOrder(
+            mo_no=f"MO-{now.strftime('%Y%m%d')}-{i+1:04d}",
+            product_id=prod.id,
+            routing_id=routing.id if routing else None,
+            batch_no=f"B{now.strftime('%Y%m%d')}-MO{i+1}",
+            priority="HIGH" if i < 2 else "NORMAL",
+            status=status,
+            source_type=MOSourceType.MANUAL.value,
+            plan_qty=plan,
+            input_qty=completed + scrapped + random.randint(50, 200) if status != ProductionOrderStatus.RELEASED.value else 0,
+            completed_qty=completed,
+            scrapped_qty=scrapped,
+            planned_start=today_start - timedelta(days=random.randint(0, 3)),
+            planned_end=today_start + timedelta(days=random.randint(1, 7)),
+            actual_start=now - timedelta(hours=random.randint(2, 12)) if status in (ProductionOrderStatus.IN_PROGRESS.value, ProductionOrderStatus.COMPLETED.value) else None,
+            actual_end=now - timedelta(hours=1) if status == ProductionOrderStatus.COMPLETED.value else None,
+            created_by_id=users.get("prod_mgr1", list(users.values())[0]).id if users else None,
+            created_by_name=users.get("prod_mgr1", list(users.values())[0]).username if users else "system",
+        )
+        db.add(mo)
+        mo_objs.append(mo)
+    db.flush()
+
+    # 3. 派工单（每条在产MO 2~3个派工）
+    dispatch_count = 0
+    running_eqs = [e for e in eqs if e.current_status in ("RUN", "IDLE")]
+    for mo in mo_objs:
+        if mo.status not in (ProductionOrderStatus.IN_PROGRESS.value, ProductionOrderStatus.RELEASED.value):
+            continue
+        num_dispatches = min(3, len(running_eqs))
+        for j in range(num_dispatches):
+            eq = running_eqs[(mo.id + j) % len(running_eqs)]
+            op = users.get("operator1") or users.get("operator2") or list(users.values())[0]
+            is_running = mo.status == ProductionOrderStatus.IN_PROGRESS.value and j == 0
+            dispatch_qty = mo.plan_qty // num_dispatches
+            completed = mo.completed_qty // num_dispatches if is_running else 0
+            d = Dispatch(
+                mo_id=mo.id,
+                step_seq=10 + j * 10,
+                step_name=["清洗", "光刻", "刻蚀"][j % 3],
+                equipment_id=eq.id,
+                assigned_operator_id=op.id,
+                assigned_team="甲班" if j % 2 == 0 else "乙班",
+                dispatch_qty=dispatch_qty,
+                completed_qty=completed,
+                scrapped_qty=0,
+                wip_qty=dispatch_qty - completed,
+                status=DispatchStatus.RUNNING.value if is_running else (DispatchStatus.ASSIGNED.value if mo.status == ProductionOrderStatus.RELEASED.value else DispatchStatus.QUEUED.value),
+                planned_start=now - timedelta(hours=2),
+                planned_end=now + timedelta(hours=6),
+                actual_start=now - timedelta(hours=2) if is_running else None,
+            )
+            db.add(d)
+            dispatch_count += 1
+
+            # 4. 报工记录（RUNNING的派工有1~2条报工）
+            if is_running:
+                db.flush()  # 确保 d.id 存在
+                for k in range(random.randint(1, 2)):
+                    lr = LaborReport(
+                        dispatch_id=d.id,
+                        reporter_id=op.id,
+                        reporter_name=op.username,
+                        report_time=now - timedelta(hours=random.randint(1, 5)),
+                        session_start=now - timedelta(hours=random.randint(3, 6)),
+                        session_end=now - timedelta(hours=random.randint(1, 3)),
+                        input_qty=random.randint(50, 200),
+                        good_qty=random.randint(45, 195),
+                        defect_qty=random.randint(0, 10),
+                        man_hours=float(random.randint(2, 4)),
+                        remark="正常生产",
+                    )
+                    db.add(lr)
+    db.commit()
+    print(f"    + 工序路由: {len(routings_created)} 个, 生产订单: {len(mo_objs)} 条, 派工: {dispatch_count} 条")
+
+
+# =====================================================================
 #  汇总打印
 # =====================================================================
 
@@ -1237,7 +1475,8 @@ def _print_summary(db):
     from app.models import (
         EquipmentStatusLog, EquipmentAttachment, SparePartMovement,
         InspectionItem, InspectionResult, FiveWhy, FormRecordValue,
-        D8Report,
+        D8Report, Product, ProductionRecord,
+        Routing, RoutingStep, ProductionOrder, Dispatch, LaborReport,
     )
     stats = [
         ("用户 User",                   db.query(User).count()),
@@ -1267,6 +1506,13 @@ def _print_summary(db):
         ("润滑执行记录",                 db.query(LubricationRecord).count()),
         ("故障知识库",                   db.query(KnowledgeEntry).count()),
         ("设备成本 EquipmentCost",       db.query(EquipmentCost).count()),
+        ("产品 Product",                 db.query(Product).count()),
+        ("生产记录 ProductionRecord",    db.query(ProductionRecord).count()),
+        ("工序路由 Routing",              db.query(Routing).count()),
+        ("工序步骤 RoutingStep",          db.query(RoutingStep).count()),
+        ("生产订单 ProductionOrder",      db.query(ProductionOrder).count()),
+        ("派工单 Dispatch",              db.query(Dispatch).count()),
+        ("报工记录 LaborReport",         db.query(LaborReport).count()),
     ]
     print("\n" + "=" * 55)
     print("📊 SEMS 全模块数据汇总")
@@ -1326,6 +1572,12 @@ def main():
         # 数据价值
         _seed_knowledge_entries(db, eqs, work_orders, users)
         _seed_equipment_costs(db, eqs, work_orders, users)
+
+        # 产品与生产记录（生产管理角色看板数据）
+        prod_objs = _seed_products_and_production(db, eqs, users)
+
+        # 生产管理模块（路由/生产订单/派工/报工）
+        _seed_production_management(db, prod_objs, eqs, users)
 
         db.commit()
         _print_summary(db)
